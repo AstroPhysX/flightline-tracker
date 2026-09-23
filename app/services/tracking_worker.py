@@ -1,0 +1,132 @@
+from __future__ import annotations
+
+import threading
+import time
+from datetime import datetime, time as dt_time, timedelta, timezone
+
+from sqlalchemy.orm import Session
+
+from ..db import SessionLocal
+from ..models import Flight
+from . import tracker_settings, viewer_presence
+from .aeroapi import AeroApiError, sync_flight
+from .logbook_service import sync_completed_flight_to_logbook
+
+_STOP = threading.Event()
+_THREAD: threading.Thread | None = None
+
+
+def _utc(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _due_candidates(db: Session, now: datetime, poll_seconds: int, *, force: bool = False) -> list[Flight]:
+    flights = (
+        db.query(Flight)
+        .filter(Flight.actual_arrival_utc.is_(None))
+        .order_by(Flight.flight_date.asc(), Flight.sequence.asc())
+        .all()
+    )
+    eligible: list[Flight] = []
+    for f in flights:
+        if f.flight_number.upper() == "BUS":
+            continue
+        last_poll = _utc(f.last_provider_poll_utc)
+        if not force and last_poll and (now - last_poll).total_seconds() < poll_seconds:
+            continue
+
+        sched = _utc(f.scheduled_departure_utc)
+        if f.actual_departure_utc:
+            eligible.append(f)
+            continue
+        if sched:
+            # Start watching before departure and keep looking for a long IROPS
+            # delay rather than abandoning the scheduled flight too early.
+            if sched - timedelta(hours=6) <= now <= sched + timedelta(hours=36):
+                eligible.append(f)
+        else:
+            day_start = datetime.combine(f.flight_date, dt_time.min, tzinfo=timezone.utc)
+            if day_start - timedelta(hours=6) <= now <= day_start + timedelta(days=2):
+                eligible.append(f)
+
+    airborne = [f for f in eligible if f.actual_departure_utc]
+    if airborne:
+        return airborne[:1]
+    # Normally only the immediate next leg needs a paid query.
+    return eligible[:1]
+
+
+def run_once(*, force: bool = False) -> dict:
+    cfg = tracker_settings.load()
+    provider = str(cfg.get("provider") or "disabled")
+    if provider != "aeroapi":
+        return {"provider": provider, "polled": 0}
+    key = tracker_settings.key_for("aeroapi", cfg)
+    if not key:
+        return {"provider": provider, "polled": 0, "error": "No API key configured"}
+
+    configured_poll_seconds = max(60, int(cfg.get("poll_seconds", 600)))
+    active_viewers = viewer_presence.count_active()
+    # With no live map viewers, keep status/delay data reasonably fresh but
+    # avoid spending money on frequent polling. Dedicated position calls are
+    # disabled entirely until a viewer returns.
+    poll_seconds = configured_poll_seconds if active_viewers else max(1800, configured_poll_seconds)
+    budget = max(0.0, float(cfg.get("monthly_budget_usd", 4.5)))
+    now = datetime.now(timezone.utc)
+    db = SessionLocal()
+    try:
+        candidates = _due_candidates(db, now, poll_seconds, force=force)
+        results = []
+        for flight in candidates:
+            try:
+                result = sync_flight(key, db, flight, budget, live_viewers=active_viewers > 0)
+                # Completed operating flights automatically become part of the
+                # lifetime logbook map. Later Logbook Pro imports supersede the
+                # automatic copy rather than duplicating it.
+                refreshed = db.get(Flight, flight.id)
+                if refreshed and refreshed.actual_arrival_utc and not refreshed.deadhead:
+                    sync_completed_flight_to_logbook(db, refreshed)
+                results.append(result)
+            except AeroApiError as exc:
+                db.rollback()
+                # Stamp the poll time after non-budget API failures to prevent a
+                # tight retry loop. Budget failures are naturally checked again
+                # but no paid call is made.
+                if "budget guard" not in str(exc).lower():
+                    flight = db.get(Flight, flight.id)
+                    if flight:
+                        flight.last_provider_poll_utc = now
+                        db.commit()
+                results.append({"flight_id": flight.id, "error": str(exc)})
+        return {"provider": provider, "polled": len(candidates), "active_viewers": active_viewers, "results": results}
+    finally:
+        db.close()
+
+
+def _loop() -> None:
+    while not _STOP.is_set():
+        try:
+            run_once()
+        except Exception:
+            # Never let a tracking-provider problem take down the family web UI.
+            pass
+        _STOP.wait(20)
+
+
+def start() -> None:
+    global _THREAD
+    if _THREAD and _THREAD.is_alive():
+        return
+    _STOP.clear()
+    _THREAD = threading.Thread(target=_loop, name="flight-tracking-worker", daemon=True)
+    _THREAD.start()
+
+
+def stop() -> None:
+    _STOP.set()
+    if _THREAD and _THREAD.is_alive():
+        _THREAD.join(timeout=2.0)

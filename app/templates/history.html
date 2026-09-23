@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="darkreader-lock">
+  <title data-i18n="flight_history">Flight history</title>
+  <script src="/static/theme.js?v=14"></script>
+  <link rel="stylesheet" href="/static/style.css?v=14">
+</head>
+<body class="history-page">
+  <main class="history-shell">
+    <div class="history-top-row">
+      <a href="/" class="back-link" data-i18n="back_current">← Current map</a>
+      <div class="button-row history-actions"><a class="map-trip-link" href="/logbook" data-i18n="logbook_map">Logbook map</a><button id="import-logbook-button" class="admin-control hidden" data-i18n="import_logbook">Import logbook</button><button id="manage-button" class="manage-button" data-i18n="manage">Manage</button><button id="theme-toggle" class="theme-toggle" title="Theme" aria-label="Theme">☾</button>
+      <button id="language-toggle" class="language-toggle" title="Language">EN</button></div>
+    </div>
+    <div class="eyebrow" data-i18n="archive">ARCHIVE</div>
+    <h1 data-i18n="flight_history">Flight history</h1>
+    {% if logbook_summary and logbook_summary.count %}
+    <section class="history-card lifetime-logbook-card">
+      <div class="history-card-title">
+        <div><div class="eyebrow" data-i18n="lifetime_flying">LIFETIME FLYING</div><h2 data-i18n="lifetime_logbook">Lifetime logbook</h2>
+          <div class="muted">{{ logbook_summary.count }} <span data-i18n="logbook_entries_short">entries</span> · {{ logbook_summary.hours }} h · {{ logbook_summary.first_date }} → {{ logbook_summary.last_date }}</div>
+        </div>
+        <a class="map-trip-link" href="/logbook" data-i18n="open_logbook_map">Open logbook map</a>
+      </div>
+    </section>
+    {% endif %}
+    {% if trips %}
+      {% for trip in trips %}
+      <section class="history-card">
+        <div class="history-card-title">
+          <div>
+            <h2>{{ trip.name }}</h2>
+            <div class="muted">{{ trip.start_date or '' }}{% if trip.end_date %} → {{ trip.end_date }}{% endif %}</div>
+          </div>
+          <div class="button-row">
+            <a class="map-trip-link" href="/?trip_id={{ trip.id }}" data-i18n="current_actual_map">Current / actual map</a>
+            {% if trip.source == 'ups_pdf' %}<a class="map-trip-link" href="/?trip_id={{ trip.id }}&view=awarded" data-i18n="awarded_map">Awarded map</a>{% endif %}
+            <button type="button" class="delete-history-button danger-button admin-control hidden" data-trip-id="{{ trip.id }}" data-trip-name="{{ trip.name|e }}" data-i18n="delete_history">Delete history</button>
+          </div>
+        </div>
+        <table>
+          <thead><tr><th data-i18n="date">Date</th><th data-i18n="flight">Flight</th><th data-i18n="route">Route</th><th data-i18n="type">Type</th><th data-i18n="status">Status</th><th data-i18n="timing">Timing</th></tr></thead>
+          <tbody>
+          {% for f in trip.flights|sort(attribute="flight_date") %}
+            {% if f.schedule_active or f.actual_departure_utc or f.actual_arrival_utc %}
+            <tr>
+              <td>{{ f.flight_date }}</td>
+              <td>{{ f.flight_number }}</td>
+              <td>{{ f.origin }} → {{ f.destination }}</td>
+              <td class="history-flight-type" data-type="{{ 'deadhead' if f.deadhead else 'operating' }}">{{ 'Deadhead' if f.deadhead else 'Operating' }}</td>
+              <td class="history-flight-status" data-status="{{ f.status }}">{{ f.status }}</td>
+              {% set timing = timing_summary(f) %}
+              <td><span class="history-timing timing-badge timing-{{ timing.flag }}" data-flag="{{ timing.flag }}" data-minutes="{{ timing.minutes if timing.minutes is not none else '' }}">{{ timing.flag }}</span></td>
+            </tr>
+            {% endif %}
+          {% endfor %}
+          </tbody>
+        </table>
+      </section>
+      {% endfor %}
+    {% else %}
+      <p data-i18n="no_saved_trips">No trips have been saved yet.</p>
+    {% endif %}
+  </main>
+  <dialog id="delete-history-dialog" class="danger-dialog">
+    <div class="danger-dialog-inner">
+      <div class="danger-icon">⚠</div>
+      <h2 data-i18n="delete_history_title">Permanently delete trip history?</h2>
+      <p id="delete-history-message"></p>
+      <p class="danger-warning" data-i18n="delete_history_warning">This removes the trip, every flight, and every saved track. It cannot be undone.</p>
+      <label><span data-i18n="type_delete_confirm">Type DELETE to confirm</span><input id="delete-history-confirm" autocomplete="off" placeholder="DELETE"></label>
+      <div class="button-row"><button id="delete-history-cancel" type="button" data-i18n="cancel">Cancel</button><button id="delete-history-confirm-button" type="button" class="danger-button" data-i18n="delete_forever">Delete forever</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="logbook-import-dialog" class="wide-dialog">
+    <div class="dialog-shell">
+      <div class="dialog-header"><div><div class="eyebrow" data-i18n="logbook_archive">LOGBOOK ARCHIVE</div><h2 data-i18n="import_logbook">Import logbook</h2></div><button type="button" id="logbook-import-close" class="icon-button">×</button></div>
+      <p class="hint" data-i18n="logbook_import_hint">Import a Logbook Pro CSV export. Re-importing a newer full export updates the archive without duplicating the flights already stored.</p>
+      <label><span data-i18n="logbook_csv">Logbook Pro CSV</span><input id="logbook-csv" type="file" accept="text/csv,.csv"></label>
+      <div class="button-row"><button type="button" id="logbook-import-submit" data-i18n="import_logbook">Import logbook</button><button type="button" id="logbook-clear-button" class="danger-button" data-i18n="clear_logbook">Clear imported logbook</button></div>
+      <div id="logbook-import-message" class="hint"></div>
+    </div>
+  </dialog>
+
+  <dialog id="logbook-clear-dialog" class="danger-dialog">
+    <div class="danger-dialog-inner">
+      <div class="danger-icon">⚠</div>
+      <h2 data-i18n="clear_logbook_title">Permanently clear imported logbook?</h2>
+      <p class="danger-warning" data-i18n="clear_logbook_warning">This removes the imported Logbook Pro archive from this tracker. It does not modify your original CSV file.</p>
+      <label><span data-i18n="type_delete_confirm">Type DELETE to confirm</span><input id="logbook-clear-confirm" autocomplete="off" placeholder="DELETE"></label>
+      <div class="button-row"><button id="logbook-clear-cancel" type="button" data-i18n="cancel">Cancel</button><button id="logbook-clear-confirm-button" type="button" class="danger-button" data-i18n="delete_forever">Delete forever</button></div>
+    </div>
+  </dialog>
+
+  <dialog id="admin-dialog" class="admin-dialog">
+    <form method="dialog" class="dialog-shell" id="admin-form">
+      <div class="dialog-header"><div><div class="eyebrow" data-i18n="admin_mode">ADMIN MODE</div><h2 data-i18n="unlock_admin">Unlock administration</h2></div><button value="cancel" class="icon-button">×</button></div>
+      <p class="hint" data-i18n="admin_hint">Viewing stays public. Unlock only when you need to change schedules, tracking settings, or history.</p>
+      <label><span data-i18n="admin_password">Admin password</span><input id="admin-password" type="password" autocomplete="current-password"></label>
+      <label class="check remember-admin"><input id="admin-remember" type="checkbox" checked> <span data-i18n="remember_device">Remember this device for 30 days</span></label>
+      <button type="button" id="admin-unlock-button" data-i18n="unlock">Unlock</button>
+      <div id="admin-message" class="hint"></div>
+    </form>
+  </dialog>
+  <script src="/static/i18n.js?v=14"></script>
+  <script src="/static/admin.js?v=14"></script>
+  <script src="/static/history.js?v=14"></script>
+</body>
+</html>

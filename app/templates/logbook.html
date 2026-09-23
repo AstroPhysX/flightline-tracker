@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="darkreader-lock">
+  <meta name="theme-color" content="#11151b">
+  <title data-i18n="logbook_map">Logbook map</title>
+  <script src="/static/theme.js?v=14"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+  <link rel="stylesheet" href="/static/style.css?v=14">
+</head>
+<body class="logbook-page map-page">
+  <div id="logbook-map"></div>
+
+  <header class="topbar glass logbook-topbar">
+    <div><div class="eyebrow" data-i18n="lifetime_flying">LIFETIME FLYING</div><div class="trip-title" data-i18n="logbook_map">Logbook map</div></div>
+    <nav>
+      <a href="/" data-i18n="current_map">Current trip</a>
+      <a href="/history" data-i18n="history">History</a>
+      <button id="manage-button" class="manage-button" data-i18n="manage">Manage</button>
+      <button id="theme-toggle" class="theme-toggle" title="Theme" aria-label="Theme">☾</button>
+      <button id="language-toggle" class="language-toggle" title="Language">EN</button>
+    </nav>
+  </header>
+
+  <section class="logbook-filter-panel glass">
+    <div class="filter-grid">
+      <label><span data-i18n="type">Type</span><select id="logbook-model"><option value="" data-i18n="all_aircraft">All aircraft types</option></select></label>
+      <label><span data-i18n="flight">Registration</span><select id="logbook-ident"><option value="" data-i18n="all_registrations">All registrations</option></select></label>
+      <label><span data-i18n="from_date">From</span><input id="logbook-start" type="date"></label>
+      <label><span data-i18n="to_date">To</span><input id="logbook-end" type="date"></label>
+    </div>
+    <div class="button-row"><button id="logbook-apply" data-i18n="apply_filters">Apply filters</button><button id="logbook-reset" data-i18n="reset_filters">All time</button></div>
+    <div class="hint" data-i18n="logbook_map_hint">Repeated routes are combined; thicker lines mean you have flown that connection more often.</div>
+    <div class="logbook-frequency-key" aria-hidden="true"><span class="freq-line freq-thin"></span><span>1×</span><span>→</span><span class="freq-line freq-thick"></span><span>many</span></div>
+  </section>
+
+  <section class="logbook-stats glass">
+    <div class="logbook-stat-grid">
+      <div><span data-i18n="logbook_entries">Flights / entries</span><strong id="lb-entries">—</strong></div>
+      <div><span data-i18n="flight_hours">Flight hours</span><strong id="lb-hours">—</strong></div>
+      <div><span data-i18n="unique_airports">Unique airports</span><strong id="lb-airports">—</strong></div>
+      <div><span data-i18n="unique_routes">Unique routes</span><strong id="lb-routes">—</strong></div>
+    </div>
+    <div id="lb-range" class="muted"></div><div id="lb-coverage" class="logbook-coverage"></div>
+  </section>
+
+  <aside class="logbook-insights glass">
+    <div><div class="eyebrow" data-i18n="top_aircraft">Top aircraft</div><div id="lb-top-models" class="insight-list"></div></div>
+    <div><div class="eyebrow" data-i18n="top_airports">Most visited airports</div><div id="lb-top-airports" class="insight-list"></div></div>
+    <div><div class="eyebrow" data-i18n="top_routes">Most flown routes</div><div id="lb-top-routes" class="insight-list"></div></div>
+  </aside>
+
+  <div id="logbook-empty" class="map-warning" data-i18n="no_logbook">No logbook has been imported yet.</div>
+
+  <dialog id="admin-dialog" class="admin-dialog">
+    <form method="dialog" class="dialog-shell" id="admin-form">
+      <div class="dialog-header"><div><div class="eyebrow" data-i18n="admin_mode">ADMIN MODE</div><h2 data-i18n="unlock_admin">Unlock administration</h2></div><button value="cancel" class="icon-button">×</button></div>
+      <p class="hint" data-i18n="admin_hint">Viewing stays public. Unlock only when you need to change schedules, tracking settings, or history.</p>
+      <label><span data-i18n="admin_password">Admin password</span><input id="admin-password" type="password" autocomplete="current-password"></label>
+      <label class="check remember-admin"><input id="admin-remember" type="checkbox" checked> <span data-i18n="remember_device">Remember this device for 30 days</span></label>
+      <button type="button" id="admin-unlock-button" data-i18n="unlock">Unlock</button>
+      <div id="admin-message" class="hint"></div>
+    </form>
+  </dialog>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+  <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
+  <script src="/static/i18n.js?v=14"></script>
+  <script src="/static/admin.js?v=14"></script>
+  <script src="/static/logbook.js?v=14"></script>
+</body>
+</html>
