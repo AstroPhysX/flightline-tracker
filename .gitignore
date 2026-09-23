@@ -1,2 +1,8 @@
-.venv
-data
+.venv/
+__pycache__/
+*.py[cod]
+.env
+/data/
+.DS_Store
+.vscode/
+.idea/
