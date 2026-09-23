@@ -202,7 +202,21 @@ def _decode_token(token: str) -> tuple[int, bool] | None:
         return None
 
 
-def create_session(response: Response, remember: bool = True) -> int:
+def _cookie_secure_for_request(request: Request) -> bool:
+    mode = str(settings.admin_cookie_secure or "auto").strip().lower()
+    if mode in {"1", "true", "yes", "on"}:
+        return True
+    if mode in {"0", "false", "no", "off"}:
+        return False
+    # Automatic mode: Uvicorn honors X-Forwarded-Proto because the container
+    # starts with --proxy-headers --forwarded-allow-ips=*. Therefore HTTPS
+    # behind the user's reverse proxy resolves to https here, while direct
+    # LAN testing over http remains usable.
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+    return request.url.scheme == "https" or forwarded == "https"
+
+
+def create_session(request: Request, response: Response, remember: bool = True) -> tuple[int, bool]:
     seconds = REMEMBER_SECONDS if remember else settings.admin_session_minutes * 60
     expires = int(time.time()) + seconds
     token = _make_token(expires, remember)
@@ -210,7 +224,7 @@ def create_session(response: Response, remember: bool = True) -> int:
         key=COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=settings.admin_cookie_secure,
+        secure=_cookie_secure_for_request(request),
         samesite="strict",
         path="/",
     )
@@ -219,7 +233,7 @@ def create_session(response: Response, remember: bool = True) -> int:
     if remember:
         kwargs["max_age"] = seconds
     response.set_cookie(**kwargs)
-    return seconds
+    return seconds, bool(kwargs["secure"])
 
 
 def destroy_session(request: Request, response: Response) -> None:

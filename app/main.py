@@ -32,7 +32,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="UPS Family Flight Tracker", version="1.3.0")
+app = FastAPI(title="Flightline Tracker", version="1.4.0")
 
 
 @app.on_event("startup")
@@ -65,7 +65,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.3.0"}
+    return {"ok": True, "version": "1.4.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -179,8 +179,8 @@ def admin_login(req: AdminLoginRequest, request: Request, response: Response):
         admin_auth.record_failed_login(request)
         raise HTTPException(401, "Incorrect admin password")
     admin_auth.clear_failed_logins(request)
-    expires_in = admin_auth.create_session(response, remember=req.remember)
-    return {"ok": True, "authenticated": True, "remembered": req.remember, "expires_in_seconds": expires_in}
+    expires_in, cookie_secure = admin_auth.create_session(request, response, remember=req.remember)
+    return {"ok": True, "authenticated": True, "remembered": req.remember, "expires_in_seconds": expires_in, "cookie_secure": cookie_secure}
 
 
 @app.post("/api/admin/logout")

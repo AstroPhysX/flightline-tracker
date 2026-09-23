@@ -1,15 +1,15 @@
-const CACHE='flightline-tracker-v14';
+const CACHE='flightline-tracker-v15';
 self.addEventListener('install', event => {
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([
     '/', '/history', '/logbook',
-    '/static/style.css?v=14',
-    '/static/i18n.js?v=14',
-    '/static/admin.js?v=14',
-    '/static/app.js?v=14',
-    '/static/history.js?v=14',
-    '/static/logbook.js?v=14',
-    '/static/theme.js?v=14'
+    '/static/style.css?v=15',
+    '/static/i18n.js?v=15',
+    '/static/admin.js?v=15',
+    '/static/app.js?v=15',
+    '/static/history.js?v=15',
+    '/static/logbook.js?v=15',
+    '/static/theme.js?v=15'
   ])));
 });
 self.addEventListener('activate', event => {

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     poll_seconds: int = 120
     dallas_timezone: str = "America/Chicago"
     admin_session_minutes: int = 30
-    admin_cookie_secure: bool = False
+    admin_cookie_secure: str = "auto"
 
     @property
     def database_url(self) -> str:

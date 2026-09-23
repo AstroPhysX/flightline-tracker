@@ -154,3 +154,9 @@ Click a logbook connection to see:
 - most-used registrations
 
 If a Logbook Pro record contains several legs but only one total duration, the per-leg average is explicitly marked as an estimate.
+
+## Admin cookie / reverse-proxy behavior
+
+`ADMIN_COOKIE_SECURE` defaults to `auto`. In automatic mode Flightline Tracker issues a Secure admin cookie when the browser is using HTTPS (including through a reverse proxy that sends `X-Forwarded-Proto: https`) and a normal HttpOnly cookie when testing directly over `http://NAS-IP:port`. You can still force `true` or `false`, but normally leave it at `auto`.
+
+If upgrading from an older stack that explicitly sets `ADMIN_COOKIE_SECURE: "true"`, either remove that line or change it to `auto`; otherwise direct HTTP testing will repeatedly ask for the admin password because browsers correctly refuse to send a Secure cookie over HTTP.

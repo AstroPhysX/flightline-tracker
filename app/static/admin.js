@@ -72,6 +72,18 @@
       });
       const data = await res.json().catch(()=>({}));
       if (!res.ok) throw new Error(data.detail || t('admin_unlock_failed'));
+
+      // Do not trust the login response alone. Browsers silently discard a
+      // Secure cookie when the page is being tested over plain HTTP. Verify
+      // that the newly-issued cookie actually comes back on the next request.
+      const verifyRes = await fetch('/api/admin/status', {cache:'no-store'});
+      const verified = verifyRes.ok ? await verifyRes.json().catch(()=>({})) : {};
+      if (!verified.authenticated) {
+        throw new Error(data.cookie_secure
+          ? 'The admin cookie was not accepted by the browser. If you are testing over http://, use ADMIN_COOKIE_SECURE=auto or false. Use true only behind HTTPS.'
+          : 'The admin session cookie was not accepted by the browser. Check browser cookie/privacy settings for this site.');
+      }
+
       authenticated = true;
       render();
       if (msg) { msg.className='hint api-ok'; msg.textContent=t('admin_unlocked_message'); }
