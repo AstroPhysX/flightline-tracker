@@ -12,7 +12,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from ..models import Airport, Flight, LogbookAirportVisit, LogbookEntry, LogbookLeg
-from .airport_resolver import ensure_airport
+from .airport_resolver import ensure_airport, canonical_airport_groups
 
 EXPECTED_COLUMNS = [
     "DATE", "AIRCRAFT MAKE & MODEL", "AIRCRAFT IDENT", "FLIGHT #", "ROUTE OF FLIGHT",
@@ -409,6 +409,119 @@ def logbook_options(db: Session) -> dict:
     }
 
 
+def _haversine_nm_coords(a: tuple[float, float], b: tuple[float, float]) -> float:
+    from math import asin, cos, radians, sin, sqrt
+    lat1, lon1 = radians(a[0]), radians(a[1])
+    lat2, lon2 = radians(b[0]), radians(b[1])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return 3440.065 * 2 * asin(min(1.0, sqrt(h)))
+
+
+def _entry_route_speed_check(entry: LogbookEntry, alias_map: dict[str, str], airport_meta: dict[str, dict]) -> dict | None:
+    """Return an explanation when a resolved historical route is physically implausible.
+
+    Old logbook exports sometimes contain legacy/internal three-letter codes that
+    collide with modern IATA codes.  We never rewrite the source route.  Instead,
+    if the resolved geography plus logged duration would require an impossible
+    average groundspeed, the entry is omitted from the map and reported.
+    """
+    duration = float(entry.duration_hours or 0.0)
+    if duration <= 0 or not entry.legs:
+        return None
+    total_nm = 0.0
+    mapped_legs = 0
+    for leg in entry.legs:
+        origin = alias_map.get(leg.origin, leg.origin)
+        destination = alias_map.get(leg.destination, leg.destination)
+        a, b = airport_meta.get(origin), airport_meta.get(destination)
+        if not a or not b:
+            continue
+        total_nm += _haversine_nm_coords((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+        mapped_legs += 1
+    if not mapped_legs or total_nm < 500:
+        return None
+    implied_kt = total_nm / duration
+    # 900 kt is intentionally generous. This is not trying to judge normal
+    # performance; it only catches unmistakable code-collision / source errors.
+    if implied_kt <= 900:
+        return None
+    return {
+        "entry_id": entry.id,
+        "date": entry.flight_date.isoformat(),
+        "aircraft_model": entry.aircraft_model,
+        "route_raw": entry.route_raw,
+        "duration_hours": duration,
+        "resolved_distance_nm": round(total_nm),
+        "implied_speed_kt": round(implied_kt),
+        "reason": "Resolved airport codes imply an impossible average groundspeed; source route left unchanged and hidden from map.",
+    }
+
+
+def route_time_estimate(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
+    """Historical average flight time for a city-pair from the imported logbook.
+
+    Direction is respected first (winds matter).  If there are no same-direction
+    samples, the reverse direction is used as a fallback. Multi-leg Logbook Pro
+    entries are divided evenly because the export has one duration for the entry.
+    """
+    origin = (origin or "").strip().upper()
+    destination = (destination or "").strip().upper()
+    alias_map, _ = canonical_airport_groups(db, {origin, destination})
+    ocanon = alias_map.get(origin, origin)
+    dcanon = alias_map.get(destination, destination)
+
+    # Pull only entries that contain either endpoint pair, then canonicalize in
+    # Python so DFW/KDFW and similar aliases contribute to the same estimate.
+    entries = (
+        db.query(LogbookEntry)
+        .options(selectinload(LogbookEntry.legs))
+        .join(LogbookLeg)
+        .filter(LogbookLeg.origin.in_({origin, destination, ocanon, dcanon}) | LogbookLeg.destination.in_({origin, destination, ocanon, dcanon}))
+        .distinct()
+        .all()
+    )
+    normalized_model = _tracker_model(aircraft_model) if aircraft_model else None
+
+    def samples(reverse: bool = False):
+        values = []
+        estimated = False
+        for entry in entries:
+            if normalized_model and entry.aircraft_model and entry.aircraft_model != normalized_model:
+                continue
+            legs = list(entry.legs)
+            if not legs or not entry.duration_hours:
+                continue
+            share = float(entry.duration_hours) / len(legs)
+            for leg in legs:
+                lm, _ = canonical_airport_groups(db, {leg.origin, leg.destination, origin, destination})
+                lo = lm.get(leg.origin, leg.origin)
+                ld = lm.get(leg.destination, leg.destination)
+                want_o, want_d = (dcanon, ocanon) if reverse else (ocanon, dcanon)
+                if lo == want_o and ld == want_d:
+                    values.append(share)
+                    estimated |= len(legs) > 1
+        return values, estimated
+
+    vals, estimated = samples(False)
+    basis = "same_direction"
+    if not vals:
+        vals, estimated = samples(True)
+        basis = "reverse_direction"
+    if not vals and normalized_model:
+        # If aircraft-specific history is unavailable, fall back to all types.
+        return route_time_estimate(db, origin, destination, None)
+    if not vals:
+        return {"average_hours": None, "samples": 0, "estimated": False, "basis": None}
+    return {
+        "average_hours": round(sum(vals) / len(vals), 2),
+        "samples": len(vals),
+        "estimated": estimated,
+        "basis": basis,
+        "aircraft_model": normalized_model,
+    }
+
+
 def build_logbook_map(
     db: Session,
     aircraft_models: list[str] | None = None,
@@ -417,6 +530,14 @@ def build_logbook_map(
     end_date: date | None = None,
 ) -> dict:
     entries = _filtered_entries(db, aircraft_models, aircraft_ident, start_date, end_date)
+
+    raw_codes: set[str] = set()
+    for entry in entries:
+        raw_codes.update(v.airport_code for v in entry.visits)
+        for leg in entry.legs:
+            raw_codes.add(leg.origin)
+            raw_codes.add(leg.destination)
+    alias_map, airport_meta = canonical_airport_groups(db, raw_codes)
 
     airport_counts: Counter[str] = Counter()
     airport_entry_counts: Counter[str] = Counter()
@@ -428,6 +549,7 @@ def build_logbook_map(
     airport_connections: defaultdict[str, Counter[str]] = defaultdict(Counter)
     airport_first_date: dict[str, date] = {}
     airport_last_date: dict[str, date] = {}
+    airport_aliases: defaultdict[str, set[str]] = defaultdict(set)
 
     route_counts: Counter[tuple[str, str]] = Counter()
     route_hours: defaultdict[tuple[str, str], float] = defaultdict(float)
@@ -442,6 +564,12 @@ def build_logbook_map(
     total_hours = 0.0
     total_landings = 0
     map_entries = 0
+    suspicious: list[dict] = []
+
+    for raw, canonical in alias_map.items():
+        airport_aliases[canonical].add(raw)
+    for canonical, meta in airport_meta.items():
+        airport_aliases[canonical].update(meta.get("aliases") or [])
 
     for entry in entries:
         hours = float(entry.duration_hours or 0.0)
@@ -451,11 +579,19 @@ def build_logbook_map(
             model_counts[entry.aircraft_model] += 1
             model_hours[entry.aircraft_model] += hours
 
+        issue = _entry_route_speed_check(entry, alias_map, airport_meta)
+        if issue:
+            suspicious.append(issue)
+            continue
+
         visited_codes = []
         for visit in entry.visits:
-            code = visit.airport_code
+            code = alias_map.get(visit.airport_code, visit.airport_code)
+            if code not in airport_meta:
+                continue
             airport_counts[code] += 1
             visited_codes.append(code)
+            airport_aliases[code].add(visit.airport_code)
             airport_first_date[code] = min(airport_first_date.get(code, entry.flight_date), entry.flight_date)
             airport_last_date[code] = max(airport_last_date.get(code, entry.flight_date), entry.flight_date)
         for code in set(visited_codes):
@@ -466,25 +602,29 @@ def build_logbook_map(
             if entry.aircraft_ident:
                 airport_idents[code][entry.aircraft_ident] += 1
 
-        if entry.visits:
+        if visited_codes:
             map_entries += 1
             if entry.aircraft_model:
                 model_mapped_counts[entry.aircraft_model] += 1
         legs = list(entry.legs)
         share = hours / len(legs) if legs and hours > 0 else 0.0
         for leg in legs:
-            key = (leg.origin, leg.destination)
+            origin = alias_map.get(leg.origin, leg.origin)
+            destination = alias_map.get(leg.destination, leg.destination)
+            if origin not in airport_meta or destination not in airport_meta:
+                continue
+            if origin == destination:
+                continue
+            key = (origin, destination)
             route_counts[key] += 1
-            airport_departures[leg.origin] += 1
-            airport_arrivals[leg.destination] += 1
-            airport_connections[leg.origin][leg.destination] += 1
-            airport_connections[leg.destination][leg.origin] += 1
+            airport_departures[origin] += 1
+            airport_arrivals[destination] += 1
+            airport_connections[origin][destination] += 1
+            airport_connections[destination][origin] += 1
             if share > 0:
                 route_hours[key] += share
                 route_duration_samples[key] += 1
                 if len(legs) > 1:
-                    # Logbook Pro supplies one duration for the whole entry.
-                    # Splitting a multi-leg entry across its legs is therefore an estimate.
                     route_duration_estimated.add(key)
             if entry.aircraft_model:
                 route_model_counts[key][entry.aircraft_model] += 1
@@ -493,20 +633,15 @@ def build_logbook_map(
             if entry.aircraft_ident:
                 route_ident_counts[key][entry.aircraft_ident] += 1
 
-    airport_codes = set(airport_counts)
-    airports = {
-        a.code: a
-        for a in db.query(Airport).filter(Airport.code.in_(airport_codes)).all()
-    } if airport_codes else {}
-
     points = []
     for code, visits in airport_counts.most_common():
-        a = airports.get(code)
+        a = airport_meta.get(code)
         if not a:
             continue
         points.append({
-            "code": code, "name": a.name, "city": a.city,
-            "lat": a.latitude, "lon": a.longitude, "visits": visits,
+            "code": code, "aliases": sorted(airport_aliases[code], key=lambda x: (len(x), x)),
+            "name": a.get("name"), "city": a.get("city"),
+            "lat": a["lat"], "lon": a["lon"], "visits": visits,
             "flights": airport_entry_counts[code],
             "departures": airport_departures[code],
             "arrivals": airport_arrivals[code],
@@ -522,15 +657,20 @@ def build_logbook_map(
                 for ident, count in airport_idents[code].most_common(8)
             ],
             "connections": [
-                {"code": other, "flights": count}
+                {
+                    "code": other,
+                    "city": airport_meta.get(other, {}).get("city"),
+                    "name": airport_meta.get(other, {}).get("name"),
+                    "flights": count,
+                }
                 for other, count in airport_connections[code].most_common(10)
             ],
         })
 
     routes = []
     for (origin, destination), count in route_counts.most_common():
-        a = airports.get(origin)
-        b = airports.get(destination)
+        a = airport_meta.get(origin)
+        b = airport_meta.get(destination)
         if not a or not b:
             continue
         key = (origin, destination)
@@ -550,14 +690,18 @@ def build_logbook_map(
         ]
         routes.append({
             "origin": origin, "destination": destination,
+            "origin_city": a.get("city"), "destination_city": b.get("city"),
+            "origin_name": a.get("name"), "destination_name": b.get("name"),
+            "origin_aliases": sorted(airport_aliases[origin], key=lambda x: (len(x), x)),
+            "destination_aliases": sorted(airport_aliases[destination], key=lambda x: (len(x), x)),
             "count": count, "hours": round(hours, 1),
             "duration_samples": duration_samples,
             "average_hours": round(hours / duration_samples, 2) if duration_samples else None,
             "duration_estimated": key in route_duration_estimated,
             "aircraft_models": model_breakdown,
             "registrations": ident_breakdown,
-            "origin_lat": a.latitude, "origin_lon": a.longitude,
-            "destination_lat": b.latitude, "destination_lon": b.longitude,
+            "origin_lat": a["lat"], "origin_lon": a["lon"],
+            "destination_lat": b["lat"], "destination_lon": b["lon"],
         })
 
     top_models = [
@@ -565,12 +709,15 @@ def build_logbook_map(
         for model, count in model_counts.most_common(12)
     ]
     top_airports = [
-        {"code": code, "visits": count, "city": airports.get(code).city if airports.get(code) else None}
+        {"code": code, "visits": count, "city": airport_meta.get(code, {}).get("city")}
         for code, count in airport_counts.most_common(12)
     ]
     top_routes = [
         {
-            "origin": o, "destination": d, "flights": count,
+            "origin": o, "destination": d,
+            "origin_city": airport_meta.get(o, {}).get("city"),
+            "destination_city": airport_meta.get(d, {}).get("city"),
+            "flights": count,
             "hours": round(route_hours[(o, d)], 1),
             "average_hours": (
                 round(route_hours[(o, d)] / route_duration_samples[(o, d)], 2)
@@ -587,7 +734,9 @@ def build_logbook_map(
             "end_date": end_date.isoformat() if end_date else None,
         },
         "summary": {
-            "entries": len(entries), "mapped_entries": map_entries, "unmapped_entries": max(0, len(entries) - map_entries),
+            "entries": len(entries), "mapped_entries": map_entries,
+            "unmapped_entries": max(0, len(entries) - map_entries - len(suspicious)),
+            "suspicious_entries": len(suspicious),
             "hours": round(total_hours, 1), "landings": total_landings,
             "unique_airports": len(airport_counts), "unique_routes": len(route_counts),
             "date_start": entries[0].flight_date.isoformat() if entries else None,
@@ -598,6 +747,7 @@ def build_logbook_map(
         "top_models": top_models,
         "top_airports": top_airports,
         "top_routes": top_routes,
+        "suspicious_routes": suspicious[:25],
     }
 
 

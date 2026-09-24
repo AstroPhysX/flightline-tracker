@@ -11,6 +11,7 @@ from ..models import Flight
 from . import tracker_settings, viewer_presence
 from .aeroapi import AeroApiError, sync_flight
 from .logbook_service import sync_completed_flight_to_logbook
+from .weather_archive import archive_for_flight
 
 _STOP = threading.Event()
 _THREAD: threading.Thread | None = None
@@ -91,6 +92,8 @@ def _run_once_unlocked(*, force: bool = False) -> dict:
                 # lifetime logbook map. Later Logbook Pro imports supersede the
                 # automatic copy rather than duplicating it.
                 refreshed = db.get(Flight, flight.id)
+                if refreshed and refreshed.actual_departure_utc and not refreshed.actual_arrival_utc:
+                    archive_for_flight(refreshed)
                 if refreshed and refreshed.actual_arrival_utc and not refreshed.deadhead:
                     sync_completed_flight_to_logbook(db, refreshed)
                 results.append(result)

@@ -55,6 +55,7 @@ def _cache_path() -> Path:
 
 _IATA_AIRPORTS = None
 _ICAO_AIRPORTS = None
+_REMOTE_AIRPORTS = None
 
 
 def _offline_airport(code: str) -> dict | None:
@@ -81,6 +82,9 @@ def _offline_airport(code: str) -> dict | None:
 
 
 def _remote_map() -> dict[str, dict]:
+    global _REMOTE_AIRPORTS
+    if _REMOTE_AIRPORTS is not None:
+        return _REMOTE_AIRPORTS
     cache = _cache_path()
     raw = None
     if cache.exists():
@@ -100,7 +104,8 @@ def _remote_map() -> dict[str, dict]:
             raw = response.json()
             cache.write_text(json.dumps(raw))
         except Exception:
-            return {}
+            _REMOTE_AIRPORTS = {}
+            return _REMOTE_AIRPORTS
 
     records = raw.values() if isinstance(raw, dict) else raw if isinstance(raw, list) else []
     result: dict[str, dict] = {}
@@ -122,7 +127,8 @@ def _remote_map() -> dict[str, dict]:
             "name": rec.get("name"),
             "city": rec.get("city"),
         }
-    return result
+    _REMOTE_AIRPORTS = result
+    return _REMOTE_AIRPORTS
 
 
 def ensure_airport(db: Session, code: str) -> Airport:
@@ -153,3 +159,96 @@ def ensure_airport(db: Session, code: str) -> Airport:
     db.add(airport)
     db.flush()
     return airport
+
+
+def _distance_nm(a: Airport, b: Airport) -> float:
+    """Great-circle distance in nautical miles between two Airport rows."""
+    from math import asin, cos, radians, sin, sqrt
+    lat1, lon1 = radians(a.latitude), radians(a.longitude)
+    lat2, lon2 = radians(b.latitude), radians(b.longitude)
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return 3440.065 * 2 * asin(min(1.0, sqrt(h)))
+
+
+def canonical_airport_groups(db: Session, codes: set[str] | list[str] | tuple[str, ...]) -> tuple[dict[str, str], dict[str, dict]]:
+    """Collapse multiple identifiers for the same physical airport.
+
+    Historical logbooks frequently mix IATA and ICAO identifiers (DFW/KDFW,
+    ANC/PANC, etc.).  The stored source code remains untouched; this function
+    only provides a canonical display/map identity.  Airports within 1 NM are
+    considered aliases, and a 3-letter code is preferred when available.
+    """
+    requested = {str(c or "").strip().upper() for c in codes if str(c or "").strip()}
+    if not requested:
+        return {}, {}
+
+    # Ensure requested codes exist where possible.
+    rows: dict[str, Airport] = {}
+    for code in sorted(requested):
+        try:
+            rows[code] = ensure_airport(db, code)
+        except ValueError:
+            pass
+
+    # Include any already-known database identifiers at the same physical field.
+    # This lets a request for DFW automatically discover an imported KDFW alias
+    # even when KDFW was not part of the caller's requested set.
+    known_rows = db.query(Airport).all()
+    for known in known_rows:
+        if known.code in rows:
+            continue
+        if any(_distance_nm(known, requested_airport) <= 1.0 for requested_airport in list(rows.values())):
+            rows[known.code] = known
+
+    # For common ICAO forms (KDFW/PANC/CYYZ), try the 3-letter suffix and keep
+    # it only if it resolves to the same physical airport.  This is deliberately
+    # coordinate-verified, so EGLL will never be incorrectly turned into GLL.
+    for code, airport in list(rows.items()):
+        if len(code) != 4:
+            continue
+        candidate = code[-3:]
+        if candidate in rows:
+            continue
+        try:
+            cand_airport = ensure_airport(db, candidate)
+        except ValueError:
+            continue
+        if _distance_nm(airport, cand_airport) <= 1.0:
+            rows[candidate] = cand_airport
+
+    groups: list[list[Airport]] = []
+    for airport in rows.values():
+        placed = False
+        for group in groups:
+            if _distance_nm(airport, group[0]) <= 1.0:
+                if all(existing.code != airport.code for existing in group):
+                    group.append(airport)
+                placed = True
+                break
+        if not placed:
+            groups.append([airport])
+
+    alias_to_canonical: dict[str, str] = {}
+    canonical_meta: dict[str, dict] = {}
+    for group in groups:
+        # Prefer IATA-style 3-letter identifiers, then the shortest code.
+        preferred = sorted(group, key=lambda a: (0 if len(a.code) == 3 else 1, len(a.code), a.code))[0]
+        aliases = sorted({a.code for a in group}, key=lambda c: (len(c), c))
+        meta = {
+            "code": preferred.code,
+            "aliases": aliases,
+            "lat": preferred.latitude,
+            "lon": preferred.longitude,
+            "tz": preferred.timezone_name,
+            "name": preferred.name,
+            "city": preferred.city,
+        }
+        canonical_meta[preferred.code] = meta
+        for a in group:
+            alias_to_canonical[a.code] = preferred.code
+
+    # Unresolved codes map to themselves; callers can decide whether to plot.
+    for code in requested:
+        alias_to_canonical.setdefault(code, code)
+    return alias_to_canonical, canonical_meta

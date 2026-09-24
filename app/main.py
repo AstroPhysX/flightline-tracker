@@ -6,7 +6,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, Query
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
@@ -15,13 +15,13 @@ from sqlalchemy.orm import Session
 from .config import settings
 from .db import Base, engine, get_db
 from .migrations import ensure_schema_extensions
-from .models import Flight, Trip, LogbookEntry
+from .models import Airport, Flight, Trip, LogbookEntry
 from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdate, FlightScheduleUpdate, ScheduleRemoveRequest, ViewerHeartbeat, AdminLoginRequest
 from .services.aeroapi import AeroApiError, test_connection as test_aeroapi_connection
 from .services.airport_resolver import ensure_airport
 from .services.dashboard import build_dashboard, select_trip
 from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking
-from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth
+from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
 from .services.ups_pdf_import import import_awarded_line_pdfs
@@ -32,7 +32,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="1.7.0")
+app = FastAPI(title="Flightline Tracker", version="1.8.0")
 
 
 @app.on_event("startup")
@@ -65,7 +65,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.7.0"}
+    return {"ok": True, "version": "1.8.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -91,7 +91,12 @@ def history(request: Request, db: Session = Depends(get_db)):
         "count": int(count or 0), "hours": round(float(hours or 0.0), 1),
         "first_date": first_date, "last_date": last_date,
     }
-    return templates.TemplateResponse(request=request, name="history.html", context={"trips": trips, "logbook_summary": logbook_summary})
+    codes = {code for trip in trips for f in trip.flights for code in (f.origin, f.destination) if code}
+    airport_map = {a.code: a for a in db.query(Airport).filter(Airport.code.in_(codes)).all()} if codes else {}
+    return templates.TemplateResponse(
+        request=request, name="history.html",
+        context={"trips": trips, "logbook_summary": logbook_summary, "airport_map": airport_map},
+    )
 
 
 @app.get("/logbook", response_class=HTMLResponse)
@@ -295,11 +300,17 @@ def get_schedule(trip_id: int | None = None, db: Session = Depends(get_db), _adm
     if not trip:
         return {"trip": None, "flights": []}
     rows = sorted([f for f in trip.flights if f.schedule_active or f.actual_departure_utc or f.actual_arrival_utc], key=lambda f: (f.sequence if f.sequence > 0 else 9999, f.flight_date, f.id))
+    codes = {code for f in rows for code in (f.origin, f.destination) if code}
+    airports = {a.code: a for a in db.query(Airport).filter(Airport.code.in_(codes)).all()} if codes else {}
+    def airport_info(code):
+        a = airports.get(code)
+        return None if not a else {"code": a.code, "city": a.city, "name": a.name}
     return {
         "trip": {"id": trip.id, "name": trip.name, "has_awarded_baseline": any(f.awarded_flight_number for f in trip.flights)},
         "flights": [{
             "id": f.id, "sequence": f.sequence, "flight_number": f.flight_number,
             "flight_date": f.flight_date.isoformat(), "origin": f.origin, "destination": f.destination,
+            "origin_airport": airport_info(f.origin), "destination_airport": airport_info(f.destination),
             "deadhead": f.deadhead, "scheduled_departure_utc": f.scheduled_departure_utc.isoformat() if f.scheduled_departure_utc else None,
             "scheduled_arrival_utc": f.scheduled_arrival_utc.isoformat() if f.scheduled_arrival_utc else None,
             "scheduled_rest_minutes": f.scheduled_rest_minutes,
@@ -430,9 +441,36 @@ def delete_trip_history(trip_id: int, db: Session = Depends(get_db), _admin: Non
     if not trip:
         raise HTTPException(404, "Trip not found")
     name = trip.name
+    flight_ids = [f.id for f in trip.flights]
     db.delete(trip)
     db.commit()
+    for flight_id in flight_ids:
+        weather_archive.delete_flight_weather(flight_id)
     return {"ok": True, "trip_id": trip_id, "name": name}
+
+
+@app.get("/api/flight/{flight_id}/weather-replay")
+def flight_weather_replay(flight_id: int, db: Session = Depends(get_db)):
+    if not db.get(Flight, flight_id):
+        raise HTTPException(404, "Flight not found")
+    rows = weather_archive.list_snapshots(flight_id)
+    return {
+        "flight_id": flight_id,
+        "snapshots": rows,
+        "storage_bytes": sum(int(r.get("bytes") or 0) for r in rows),
+        "archive_interval_minutes": 30,
+        "archive_zoom": 4,
+    }
+
+
+@app.get("/api/flight/{flight_id}/weather-replay/{filename}")
+def flight_weather_replay_file(flight_id: int, filename: str, db: Session = Depends(get_db)):
+    if not db.get(Flight, flight_id):
+        raise HTTPException(404, "Flight not found")
+    path = weather_archive.snapshot_file(flight_id, filename)
+    if path is None:
+        raise HTTPException(404, "Weather snapshot not found")
+    return FileResponse(path, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
 @app.get("/api/settings/tracking")

@@ -122,6 +122,11 @@ let currentMapView = new URLSearchParams(location.search).get('view') === 'award
 let weatherLayer = null;
 let weatherEnabled = false;
 let weatherFrameGenerated = null;
+let replayWeatherLayer = null;
+let replayWeatherSnapshots = [];
+let replayRainViewerPayload = null;
+let replayWeatherKey = null;
+let replayRestoreLiveWeather = false;
 
 function cssVar(name, fallback='') {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
@@ -238,6 +243,33 @@ function stopLabel(airport, code) {
   return `${escapeHtml(city)} <b>${escapeHtml(code)}</b>`;
 }
 
+function airportDisplay(airport, code) {
+  const place=airport?.city || airport?.name || '';
+  return place && String(place).toUpperCase()!==String(code).toUpperCase() ? `${code} (${place})` : code;
+}
+
+function flightAirportDisplay(f, side) {
+  const code=side==='origin'?f?.origin:f?.destination;
+  const airport=side==='origin'?f?.origin_airport:f?.destination_airport;
+  return airportDisplay(airport, code||'—');
+}
+
+function flightRouteText(f) {
+  return `${flightAirportDisplay(f,'origin')} → ${flightAirportDisplay(f,'destination')}`;
+}
+
+function formatMinutesDuration(minutes) {
+  const n=Number(minutes);
+  if(!Number.isFinite(n) || n<0) return '—';
+  const h=Math.floor(n/60), m=Math.round(n%60);
+  return h ? `${h}h ${String(m).padStart(2,'0')}m` : `${m}m`;
+}
+
+function formatHoursDuration(hours) {
+  const n=Number(hours);
+  return Number.isFinite(n) && n>0 ? formatMinutesDuration(Math.round(n*60)) : '—';
+}
+
 function addStopMarker(airport, code, isRest) {
   if (!airport) return;
   const html=`<div class="stop-marker ${isRest?'rest-stop':''}"><span class="stop-symbol">${isRest?'★':'●'}</span><span class="stop-label">${stopLabel(airport, code)}</span></div>`;
@@ -327,8 +359,12 @@ function flightLegPopupHtml(f) {
   const replay=(f.track||[]).length>=2 ? `<button type="button" class="replay-flight-button" onclick="window.startFlightReplay(${Number(f.id)})">${escapeHtml(t('replay_flight'))}</button>` : '';
   const aircraft=[f.registration,f.aircraft_type].filter(Boolean).map(escapeHtml).join(' · ');
   const type=f.deadhead ? ` · ${escapeHtml(t('deadhead'))}` : '';
-  return `<div class="leg-popup"><h3>${escapeHtml(t('leg'))} ${escapeHtml(f.sequence)} · ${flightExternalLinksHtml(f)}</h3><div class="leg-popup-route">${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}${type}</div><div class="leg-popup-grid"><span>${escapeHtml(t('status'))}</span><b>${escapeHtml(status)}</b><span>${escapeHtml(t('takeoff_dallas'))}</span><b>${escapeHtml(dep)}</b><span>${escapeHtml(t('landing_dallas'))}</span><b>${escapeHtml(arr)}</b><span>${escapeHtml(t('delay'))}</span><b>${escapeHtml(fmtDelay(f))}</b>${aircraft?`<span>${escapeHtml(t('aircraft'))}</span><b>${aircraft}</b>`:''}</div><div class="leg-popup-actions"><a href="${flightAwareUrl(f)}" target="_blank" rel="noopener">FlightAware ↗</a><a href="${flightradar24Url(f)}" target="_blank" rel="noopener">Flightradar24 ↗</a>${replay}</div></div>`;
+  const scheduled=f.scheduled_duration_minutes!=null?formatMinutesDuration(f.scheduled_duration_minutes):'—';
+  const typical=f.historical_average_hours!=null?formatHoursDuration(f.historical_average_hours):'—';
+  const typicalNote=f.historical_samples?` (${f.historical_samples}×${f.historical_duration_estimated?'*':''})`:'';
+  return `<div class="leg-popup"><h3>${escapeHtml(t('leg'))} ${escapeHtml(f.sequence)} · ${flightExternalLinksHtml(f)}</h3><div class="leg-popup-route">${escapeHtml(flightRouteText(f))}${type}</div><div class="leg-popup-grid"><span>${escapeHtml(t('status'))}</span><b>${escapeHtml(status)}</b><span>${escapeHtml(t('takeoff_dallas'))}</span><b>${escapeHtml(dep)}</b><span>${escapeHtml(t('landing_dallas'))}</span><b>${escapeHtml(arr)}</b><span>${escapeHtml(t('delay'))}</span><b>${escapeHtml(fmtDelay(f))}</b><span>${escapeHtml(t('scheduled_flight_time'))}</span><b>${escapeHtml(scheduled)}</b><span>${escapeHtml(t('typical_flight_time'))}</span><b>${escapeHtml(typical+typicalNote)}</b>${aircraft?`<span>${escapeHtml(t('aircraft'))}</span><b>${aircraft}</b>`:''}</div><div class="leg-popup-actions"><a href="${flightAwareUrl(f)}" target="_blank" rel="noopener">FlightAware ↗</a><a href="${flightradar24Url(f)}" target="_blank" rel="noopener">Flightradar24 ↗</a>${replay}</div></div>`;
 }
+
 
 function addRouteIndicator(f, points, repeatIndex=0) {
   if (!points?.length) return;
@@ -336,7 +372,7 @@ function addRouteIndicator(f, points, repeatIndex=0) {
   const sample=pointAtFraction(points,fractions[repeatIndex % fractions.length]);
   if (!sample) return;
   const heading=bearingDegrees(sample.before,sample.after)-90;
-  const html=`<div class="route-indicator" title="${escapeHtml(t('leg'))} ${f.sequence}: ${escapeHtml(f.flight_number)} ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}"><span class="route-sequence">${escapeHtml(f.sequence)}</span><span class="route-arrow" style="transform:rotate(${heading}deg)">➤</span></div>`;
+  const html=`<div class="route-indicator" title="${escapeHtml(t('leg'))} ${f.sequence}: ${escapeHtml(f.flight_number)} ${escapeHtml(flightRouteText(f))}"><span class="route-sequence">${escapeHtml(f.sequence)}</span><span class="route-arrow" style="transform:rotate(${heading}deg)">➤</span></div>`;
   const icon=L.divIcon({className:'route-indicator-icon',html,iconSize:[52,28],iconAnchor:[26,14]});
   for (const offset of [-720,-360,0,360,720]) {
     const marker=L.marker([sample.point[0],sample.point[1]+offset],{icon,pane:'routeIndicatorPane',interactive:true,keyboard:true}).addTo(map);
@@ -431,7 +467,7 @@ function drawDashboard(data) {
 
     const a=[f.origin_airport.lat,f.origin_airport.lon];
     const b=[f.destination_airport.lat,f.destination_airport.lon];
-    const tooltip=`${t('leg')} ${f.sequence} · ${f.flight_number} · ${f.origin} → ${f.destination}${f.deadhead ? ' · '+t('deadhead') : ''}`;
+    const tooltip=`${t('leg')} ${f.sequence} · ${f.flight_number} · ${flightRouteText(f)}${f.deadhead ? ' · '+t('deadhead') : ''}`;
     const track=(f.track || []).map(p=>[p.lat,p.lon]);
     let indicatorPath=[];
 
@@ -520,12 +556,13 @@ function nextFlightDescriptionHtml(next) {
   if (!next) return '';
   const when=fmtDallas(bestDepartureIso(next,{actual:false}));
   const token='__FLIGHT_LINK__';
-  const raw=t('next_flight_status',{when,flight:token,route:`${next.origin} → ${next.destination}`});
+  const typical=next.historical_average_hours!=null?` · ${t('typical_short',{time:formatHoursDuration(next.historical_average_hours)})}`:'';
+  const raw=t('next_flight_status',{when,flight:token,route:flightRouteText(next)})+typical;
   return escapeHtml(raw).replace(token,flightExternalLinksHtml(next));
 }
 
 function statusMainFlightHtml(f) {
-  return `${flightExternalLinksHtml(f)} · ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}`;
+  return `${flightExternalLinksHtml(f)} · ${escapeHtml(flightRouteText(f))}`;
 }
 
 function updateStatusText() {
@@ -559,21 +596,21 @@ function updateStatusText() {
     setMetricLabels('takeoff_dallas','expected_landing_dallas');
   } else if (last && next) {
     const resting=(last.status==='completed' && dashboard?.status?.is_resting);
-    mainHtml=escapeHtml(resting ? t('resting_at',{place:last.destination}) : t('last_scheduled_stop',{place:last.destination}));
+    mainHtml=escapeHtml(resting ? t('resting_at',{place:flightAirportDisplay(last,'destination')}) : t('on_ground_at',{place:flightAirportDisplay(last,'destination')}));
     detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?` · ${escapeHtml(t('deadhead'))}`:'');
     delayFocus=next;
     primaryIso=bestArrivalIso(last);
     secondaryIso=bestDepartureIso(next,{actual:false});
     setMetricLabels('last_landing_dallas','next_takeoff_dallas');
   } else if (next) {
-    mainHtml=`${escapeHtml(next.origin)} → ${escapeHtml(next.destination)}`;
+    mainHtml=escapeHtml(flightRouteText(next));
     detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?` · ${escapeHtml(t('deadhead'))}`:'');
     delayFocus=next;
     primaryIso=bestDepartureIso(next,{actual:false});
     secondaryIso=bestArrivalIso(next,{actual:false});
     setMetricLabels('next_takeoff_dallas','expected_landing_dallas');
   } else if (last) {
-    mainHtml=escapeHtml(t('trip_complete',{place:last.destination}));
+    mainHtml=escapeHtml(t('trip_complete',{place:flightAirportDisplay(last,'destination')}));
     detailHtml=escapeHtml(last.status==='completed' ? t('all_completed') : t('all_past'));
     delayFocus=last;
     primaryIso=bestArrivalIso(last);
@@ -599,19 +636,17 @@ function updateClocks() {
     document.getElementById('local-time').textContent=new Intl.DateTimeFormat(currentLocale(),{timeZone:tz,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
   } catch { document.getElementById('local-time').textContent='--:--'; }
 
-  const rest=dashboard?.status?.rest_start_utc;
-  if (!rest || dashboard?.status?.state==='airborne') {
+  const next=(dashboard?.flights||[]).find(f=>f.status==='scheduled');
+  const nextIso=bestDepartureIso(next,{actual:false});
+  if (!nextIso || dashboard?.status?.state==='airborne') {
     document.getElementById('rest-timer').textContent='—';
     return;
   }
-  const diff=Math.floor((now-new Date(rest))/1000);
-  if (diff<0) {
-    const n=Math.abs(diff),m=Math.floor(n/60),s=n%60;
-    document.getElementById('rest-timer').textContent=t('starts_in',{time:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`});
-    return;
-  }
-  const h=Math.floor(diff/3600),m=Math.floor((diff%3600)/60),s=diff%60;
-  document.getElementById('rest-timer').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  const diff=Math.floor((new Date(nextIso)-now)/1000);
+  if(diff<=0){document.getElementById('rest-timer').textContent=t('due_now');return;}
+  const days=Math.floor(diff/86400),h=Math.floor((diff%86400)/3600),m=Math.floor((diff%3600)/60),sec=diff%60;
+  const clock=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+  document.getElementById('rest-timer').textContent=days?`${days}d ${clock}`:clock;
 }
 
 let replayTimer=null;
@@ -625,7 +660,7 @@ function ensureReplayPanel(){
   if(panel) return panel;
   panel=document.createElement('div');
   panel.id='replay-panel'; panel.className='replay-panel glass hidden';
-  panel.innerHTML=`<div><strong id="replay-title">Replay</strong><div id="replay-time" class="muted"></div></div><div class="replay-actions"><button id="replay-pause" type="button">⏸</button><button id="replay-speed" type="button">1×</button><button id="replay-stop" type="button">×</button></div>`;
+  panel.innerHTML=`<div><strong id="replay-title">Replay</strong><div id="replay-time" class="muted"></div><div id="replay-weather-status" class="muted"></div></div><div class="replay-actions"><button id="replay-pause" type="button">⏸</button><button id="replay-speed" type="button">1×</button><button id="replay-stop" type="button">×</button></div>`;
   document.body.appendChild(panel);
   panel.querySelector('#replay-pause').onclick=()=>{
     if(replayTimer){clearInterval(replayTimer);replayTimer=null;panel.querySelector('#replay-pause').textContent='▶';}
@@ -634,6 +669,66 @@ function ensureReplayPanel(){
   panel.querySelector('#replay-speed').onclick=()=>{replaySpeed=replaySpeed===1?2:replaySpeed===2?4:1;panel.querySelector('#replay-speed').textContent=`${replaySpeed}×`;};
   panel.querySelector('#replay-stop').onclick=()=>stopFlightReplay();
   return panel;
+}
+
+function clearReplayWeather(){
+  if(replayWeatherLayer){map.removeLayer(replayWeatherLayer);replayWeatherLayer=null;}
+  replayWeatherKey=null;
+  if(!weatherEnabled) weatherCredit.style.display='none';
+}
+
+function replayWeatherStatus(text){const el=document.getElementById('replay-weather-status');if(el)el.textContent=text||'';}
+
+async function loadReplayWeather(flightId){
+  replayWeatherSnapshots=[]; replayRainViewerPayload=null; replayWeatherKey=null;
+  try{
+    const res=await fetch(`/api/flight/${Number(flightId)}/weather-replay`,{cache:'no-store'});
+    if(res.ok){const data=await res.json();replayWeatherSnapshots=data.snapshots||[];}
+  }catch(_){ }
+  try{
+    const res=await fetch('https://api.rainviewer.com/public/weather-maps.json',{cache:'no-store'});
+    if(res.ok) replayRainViewerPayload=await res.json();
+  }catch(_){ }
+}
+
+function closestByTime(rows, targetMs, field, maxDiffMs=Infinity){
+  let best=null,bestDiff=Infinity;
+  for(const row of rows||[]){const raw=row?.[field];if(raw==null)continue;const ms=typeof raw==='number'?raw*1000:new Date(raw).getTime();if(!Number.isFinite(ms))continue;const diff=Math.abs(ms-targetMs);if(diff<bestDiff){best=row;bestDiff=diff;}}
+  return bestDiff<=maxDiffMs?best:null;
+}
+
+function updateReplayWeather(iso){
+  if(!iso)return;
+  const targetMs=new Date(iso).getTime();
+  const archived=closestByTime(replayWeatherSnapshots,targetMs,'radar_time',45*60*1000);
+  if(archived){
+    const key=`archive:${archived.file}`;
+    if(replayWeatherKey!==key){
+      clearReplayWeather();
+      const b=archived.bounds||{};
+      const mid=((Number(b.west)||0)+(Number(b.east)||0))/2;
+      const shiftedMid=shiftLonNear(mid,map.getCenter().lng);const offset=shiftedMid-mid;
+      replayWeatherLayer=L.imageOverlay(archived.url,[[Number(b.south),Number(b.west)+offset],[Number(b.north),Number(b.east)+offset]],{pane:'weatherPane',opacity:.58,interactive:false}).addTo(map);
+      replayWeatherKey=key;
+    }
+    weatherCredit.style.display='block';
+    replayWeatherStatus(t('replay_weather_archived',{time:new Date((archived.radar_time||0)*1000).toISOString().slice(11,16)+'Z'}));
+    return;
+  }
+  const frames=replayRainViewerPayload?.radar?.past||[];
+  const recent=closestByTime(frames,targetMs,'time',15*60*1000);
+  if(recent && replayRainViewerPayload?.host && recent.path){
+    const key=`recent:${recent.time}`;
+    if(replayWeatherKey!==key){
+      clearReplayWeather();
+      replayWeatherLayer=L.tileLayer(`${replayRainViewerPayload.host}${recent.path}/256/{z}/{x}/{y}/2/1_1.png`,{pane:'weatherPane',opacity:.56,maxNativeZoom:7,maxZoom:12,noWrap:false,attribution:'Weather radar © RainViewer'}).addTo(map);
+      replayWeatherKey=key;
+    }
+    weatherCredit.style.display='block';
+    replayWeatherStatus(t('replay_weather_recent',{time:new Date(Number(recent.time)*1000).toISOString().slice(11,16)+'Z'}));
+    return;
+  }
+  clearReplayWeather(); replayWeatherStatus(t('replay_weather_unavailable'));
 }
 
 function replayPoint(){
@@ -650,7 +745,7 @@ function renderReplayPoint(){
   replayMarker=L.marker([p.lat,replayLon],{icon,pane:'aircraftPane',interactive:false}).addTo(map);
   const panel=ensureReplayPanel();
   panel.querySelector('#replay-time').textContent=p.captured_utc ? `${fmtDallas(p.captured_utc)} · ${new Date(p.captured_utc).toISOString().replace('.000','')}` : '';
-  if(p.captured_utc) drawNightOverlay(new Date(p.captured_utc));
+  if(p.captured_utc){drawNightOverlay(new Date(p.captured_utc));updateReplayWeather(p.captured_utc);}
 }
 
 function startReplayTimer(){
@@ -664,13 +759,16 @@ function startReplayTimer(){
   },120);
 }
 
-function startFlightReplay(flightId){
+async function startFlightReplay(flightId){
   const f=(dashboard?.flights||[]).find(x=>Number(x.id)===Number(flightId));
   if(!f || (f.track||[]).length<2){showWarning(t('replay_unavailable'));return;}
   stopFlightReplay(false);
+  replayRestoreLiveWeather=weatherEnabled;
+  if(weatherLayer){map.removeLayer(weatherLayer);weatherLayer=null;}
   replayFlight=f; replayIndex=0; replaySpeed=1;
+  await loadReplayWeather(f.id);
   const panel=ensureReplayPanel(); panel.classList.remove('hidden');
-  panel.querySelector('#replay-title').textContent=`${t('replay_flight')} · ${f.flight_number} · ${f.origin} → ${f.destination}`;
+  panel.querySelector('#replay-title').textContent=`${t('replay_flight')} · ${f.flight_number} · ${flightRouteText(f)}`;
   panel.querySelector('#replay-speed').textContent='1×'; panel.querySelector('#replay-pause').textContent='⏸';
   map.closePopup(); renderReplayPoint(); startReplayTimer();
 }
@@ -679,9 +777,12 @@ window.startFlightReplay=startFlightReplay;
 function stopFlightReplay(hide=true){
   if(replayTimer){clearInterval(replayTimer);replayTimer=null;}
   if(replayMarker){map.removeLayer(replayMarker);replayMarker=null;}
+  clearReplayWeather(); replayWeatherSnapshots=[]; replayRainViewerPayload=null; replayWeatherStatus('');
   replayFlight=null; replayIndex=0;
   if(hide) document.getElementById('replay-panel')?.classList.add('hidden');
   drawNightOverlay(new Date());
+  if(replayRestoreLiveWeather && weatherEnabled) setWeatherEnabled(true);
+  replayRestoreLiveWeather=false;
 }
 
 async function refresh() {
@@ -835,7 +936,7 @@ async function loadScheduleEditor(explicitTripId=null){
       f.scheduled_rest_minutes?`<span class="schedule-badge rest">★ ${escapeHtml(t('rest_badge',{time:formatRestMinutes(f.scheduled_rest_minutes)}))}</span>`:''
     ].join('');
     row.innerHTML=`
-      <div class="schedule-row-head"><div class="schedule-row-title">${escapeHtml(t('leg'))} ${f.sequence||'—'} · ${escapeHtml(f.flight_number)} · ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}</div><div class="schedule-badges">${badges}</div></div>
+      <div class="schedule-row-head"><div class="schedule-row-title">${escapeHtml(t('leg'))} ${f.sequence||'—'} · ${escapeHtml(f.flight_number)} · ${escapeHtml(flightRouteText(f))}</div><div class="schedule-badges">${badges}</div></div>
       <div class="schedule-fields compact-schedule-fields">
         <label>${escapeHtml(t('flight'))}<input class="sf-flight" value="${escapeHtml(f.flight_number)}" ${locked?'disabled':''}></label>
         <label>${escapeHtml(t('origin'))}<input class="sf-origin" value="${escapeHtml(f.origin)}" ${locked?'disabled':''}></label>

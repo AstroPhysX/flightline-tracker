@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Airport, Flight, Trip
 from .flight_timing import timing_summary
+from .logbook_service import route_time_estimate
 
 REST_RELEASE_BUFFER_MINUTES = 45
 
@@ -166,6 +167,15 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
         if origin is None: missing_airports.add(origin_code)
         if destination is None: missing_airports.add(destination_code)
 
+        scheduled_duration_minutes = None
+        if sched_dep and sched_arr:
+            dep_dt = sched_dep if sched_dep.tzinfo else sched_dep.replace(tzinfo=timezone.utc)
+            arr_dt = sched_arr if sched_arr.tzinfo else sched_arr.replace(tzinfo=timezone.utc)
+            scheduled_duration_minutes = max(0, round((arr_dt - dep_dt).total_seconds() / 60))
+        typical = route_time_estimate(
+            db, origin_code, destination_code, aircraft_type if view == "current" else None
+        ) if origin and destination else {"average_hours": None, "samples": 0, "estimated": False, "basis": None}
+
         flights.append({
             "id": f.id,
             "sequence": sequence,
@@ -187,6 +197,11 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
             "actual_arrival_utc": _iso(actual_arr),
             "provider_flight_id": f.provider_flight_id if view == "current" else None,
             "scheduled_rest_minutes": f.scheduled_rest_minutes,
+            "scheduled_duration_minutes": scheduled_duration_minutes,
+            "historical_average_hours": typical.get("average_hours"),
+            "historical_samples": typical.get("samples", 0),
+            "historical_duration_estimated": bool(typical.get("estimated")),
+            "historical_basis": typical.get("basis"),
             "aircraft_type": aircraft_type,
             "registration": registration,
             "latitude": latitude,

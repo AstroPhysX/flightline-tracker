@@ -74,7 +74,7 @@ The included `.github/workflows/docker-publish.yml` runs whenever `main` is upda
 ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
 ```
 
-It also publishes version tags such as `:v17.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
+It also publishes version tags such as `:v18.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
 
 ### First-time GHCR setup
 
@@ -116,11 +116,11 @@ Do not use `main` as a scratch branch once Watchtower is auto-deploying `:stable
 Once a version is known-good:
 
 ```bash
-git tag v17.0
-git push origin v17.0
+git tag v18.0
+git push origin v18.0
 ```
 
-That gives you a fixed `:v17.0` image that can be used for rollback even after `:stable` moves forward.
+That gives you a fixed `:v18.0` image that can be used for rollback even after `:stable` moves forward.
 
 ## Watchtower updates
 
@@ -167,7 +167,7 @@ If a Logbook Pro record contains several legs but only one total duration, the p
 
 ### Historical weather
 
-Flightline Tracker does not archive radar tiles in v16. RainViewer's public composite timeline is short-lived, so durable per-flight radar history would require downloading and storing weather imagery while each flight is in progress. Exact flight tracks remain stored locally as before. Solar/day-night geometry does not require stored imagery and can be reconstructed later from saved timestamps.
+Flightline Tracker now supports lightweight replay weather. For recent flights, replay can use RainViewer's short public historical window directly. For future tracked flights, v18 also saves one low-resolution radar tile near the aircraft about every 30 minutes while airborne. These snapshots live under persistent `/data/weather/<flight_id>/` and are used only for replay context; the tracker does **not** archive an entire global radar mosaic. A 12-hour flight normally produces about 24 small PNG snapshots. Day/night geometry is still reconstructed mathematically from the saved track timestamps and requires no stored imagery.
 
 ## Admin cookie / reverse-proxy behavior
 
@@ -185,3 +185,14 @@ If upgrading from an older stack that explicitly sets `ADMIN_COOKIE_SECURE: "tru
 - Saved AeroAPI tracks can be replayed entirely in the browser with no new AeroAPI calls; the historical day/night terminator follows the saved track timestamps.
 - Map palette: Liberty is now the normal/light basemap; Fiord is the darker basemap.
 - The B747-specific aircraft-filter shortcut was removed; multi-select remains available for any combination of aircraft types.
+
+
+## v18 airport/history cleanup
+
+- Logbook airport identities are canonicalized by physical location. IATA/ICAO duplicates such as `DFW`/`KDFW` and `ANC`/`PANC` collapse to one map node while the popup retains the aliases.
+- Old logbook routes that resolve to geography requiring more than 900 kt average groundspeed are treated as suspicious code/source collisions. They remain in lifetime totals but are hidden from the geographic map; the original Logbook Pro text is never rewritten.
+- Airport codes shown throughout the current map, schedule editor, history, logbook route popups, and top-route summaries include city/location names where available.
+- The ground status now says **On ground at …** rather than “Last scheduled stop.”
+- The old elapsed rest timer is now a live **Next flight in** countdown to the next planned/provider-adjusted takeoff.
+- Current-leg popups show scheduled duration plus a typical historical flight time derived from the imported logbook when samples exist.
+- Replay uses saved radar snapshots when available and falls back to RainViewer's recent public archive when the replay timestamp is still inside that window.
