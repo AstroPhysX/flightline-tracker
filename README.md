@@ -74,7 +74,7 @@ The included `.github/workflows/docker-publish.yml` runs whenever `main` is upda
 ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
 ```
 
-It also publishes version tags such as `:v14.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
+It also publishes version tags such as `:v17.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
 
 ### First-time GHCR setup
 
@@ -116,11 +116,11 @@ Do not use `main` as a scratch branch once Watchtower is auto-deploying `:stable
 Once a version is known-good:
 
 ```bash
-git tag v14.0
-git push origin v14.0
+git tag v17.0
+git push origin v17.0
 ```
 
-That gives you a fixed `:v14.0` image that can be used for rollback even after `:stable` moves forward.
+That gives you a fixed `:v17.0` image that can be used for rollback even after `:stable` moves forward.
 
 ## Watchtower updates
 
@@ -138,7 +138,7 @@ Your `/data` bind mount is not replaced when Watchtower recreates the applicatio
 
 ## Theme and maps
 
-The browser remembers the selected theme. **Light** intentionally restores the classic v12 appearance: the original dark translucent control panels over the bright map, with the original blue/orange/yellow/grey flight palette. **Dark** uses a softer slate UI and the OpenFreeMap Liberty basemap rather than the nearly-black Dark style so the day/night terminator remains visible.
+The browser remembers the selected theme. **Light** keeps the classic translucent Flightline UI but now uses OpenFreeMap **Liberty**, which is the map palette preferred during testing. **Dark** uses the darker OpenFreeMap **Fiord** basemap: clearly darker than Liberty without returning to the nearly-black style that made the day/night terminator hard to see.
 
 Dark Reader is locked out because the application manages its own route colors and theme.
 
@@ -155,8 +155,33 @@ Click a logbook connection to see:
 
 If a Logbook Pro record contains several legs but only one total duration, the per-leg average is explicitly marked as an estimate.
 
+
+## v16 map interaction and rest inference
+
+- Manual/rebuilt schedules automatically mark a **rest stop** when the gap from one scheduled arrival to the next scheduled departure is **10 hours or more**. The destination gets the existing star marker, and the schedule editor shows the calculated rest duration.
+- The lifetime logbook map uses wide invisible hit targets so very thin routes remain easy to click.
+- Clicking a route dims unrelated routes/airports and highlights only that connection and its endpoints. Clicking an airport highlights every connection associated with that location. Click empty map space to restore the full map.
+- Airport popups show visits, flights touching the airport, arrivals/departures, logged hours, first/last visit, aircraft breakdown, registrations, and most-used connections.
+- Aircraft filtering supports selecting **multiple types at once**.
+- A **Map only** control hides the UI overlays on both current-trip and lifetime-logbook maps.
+
+### Historical weather
+
+Flightline Tracker does not archive radar tiles in v16. RainViewer's public composite timeline is short-lived, so durable per-flight radar history would require downloading and storing weather imagery while each flight is in progress. Exact flight tracks remain stored locally as before. Solar/day-night geometry does not require stored imagery and can be reconstructed later from saved timestamps.
+
 ## Admin cookie / reverse-proxy behavior
 
 `ADMIN_COOKIE_SECURE` defaults to `auto`. In automatic mode Flightline Tracker issues a Secure admin cookie when the browser is using HTTPS (including through a reverse proxy that sends `X-Forwarded-Proto: https`) and a normal HttpOnly cookie when testing directly over `http://NAS-IP:port`. You can still force `true` or `false`, but normally leave it at `auto`.
 
 If upgrading from an older stack that explicitly sets `ADMIN_COOKIE_SECURE: "true"`, either remove that line or change it to `auto`; otherwise direct HTTP testing will repeatedly ask for the admin password because browsers correctly refuse to send a Secure cookie over HTTP.
+
+
+## v17 live-status and replay refinements
+
+- Flight numbers on the current map link to FlightAware, with a nearby Flightradar24 link. UPS ICAO identifiers such as `UPS2998` are translated to the FR24/IATA form `5X2998` for that link.
+- The live card now keeps FlightAware runway scheduled OFF/ON times and provider delay values separate from the UPS/PDF schedule. Before a flight it shows the last landing and next takeoff; airborne it shows actual takeoff and expected landing; after landing it shows the landing and next takeoff.
+- Completed deadheads remain dashed instead of becoming solid grey routes.
+- Leg-number markers are clickable and show route, timing, aircraft/registration, external tracking links, and saved-track replay when available.
+- Saved AeroAPI tracks can be replayed entirely in the browser with no new AeroAPI calls; the historical day/night terminator follows the saved track timestamps.
+- Map palette: Liberty is now the normal/light basemap; Fiord is the darker basemap.
+- The B747-specific aircraft-filter shortcut was removed; multi-select remains available for any combination of aircraft types.

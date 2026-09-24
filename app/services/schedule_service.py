@@ -15,6 +15,29 @@ def _utc(dt: datetime | None) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
+REST_THRESHOLD_MINUTES = 10 * 60
+
+
+def infer_scheduled_rests(flights: list[Flight]) -> None:
+    """Infer rest stops from the schedule itself.
+
+    If the gap from one leg's scheduled arrival to the next leg's scheduled
+    departure is at least 10 hours, the destination of the first leg is treated
+    as a rest stop.  This is intentionally based on explicit UTC datetimes so
+    overnight and International Date Line trips need no special handling.
+    """
+    for flight in flights:
+        flight.scheduled_rest_minutes = None
+    for current, nxt in zip(flights, flights[1:]):
+        arrival = _utc(current.scheduled_arrival_utc)
+        departure = _utc(nxt.scheduled_departure_utc)
+        if arrival is None or departure is None or departure <= arrival:
+            continue
+        gap_minutes = int((departure - arrival).total_seconds() // 60)
+        if gap_minutes >= REST_THRESHOLD_MINUTES:
+            current.scheduled_rest_minutes = gap_minutes
+
+
 def chronology_key(f: Flight):
     """Sort the current schedule by schedule chronology, never insertion order."""
     dt = _utc(f.scheduled_departure_utc)
@@ -35,6 +58,7 @@ def resequence_trip(db: Session, trip: Trip) -> None:
     active.sort(key=chronology_key)
     for seq, flight in enumerate(active, start=1):
         flight.sequence = seq
+    infer_scheduled_rests(active)
     active_ids = {f.id for f in active}
     for flight in rows:
         if flight.id not in active_ids:
@@ -46,6 +70,26 @@ def resequence_trip(db: Session, trip: Trip) -> None:
         trip.start_date = None
         trip.end_date = None
     db.flush()
+
+
+def clear_provider_tracking(flight: Flight) -> None:
+    """Clear provider-derived state after an unflown schedule identity changes."""
+    flight.provider_flight_id = None
+    flight.provider_scheduled_departure_utc = None
+    flight.provider_scheduled_arrival_utc = None
+    flight.provider_departure_delay_seconds = None
+    flight.provider_arrival_delay_seconds = None
+    flight.estimated_departure_utc = None
+    flight.estimated_arrival_utc = None
+    flight.current_latitude = None
+    flight.current_longitude = None
+    flight.altitude_ft = None
+    flight.groundspeed_kt = None
+    flight.last_position_utc = None
+    flight.last_provider_poll_utc = None
+    flight.last_track_poll_utc = None
+    flight.last_reassignment_search_utc = None
+    flight.provider_track_fetched = False
 
 
 def snapshot_awarded(flight: Flight) -> None:

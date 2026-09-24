@@ -179,8 +179,13 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
             "scheduled_arrival_utc": _iso(sched_arr),
             "estimated_departure_utc": _iso(est_dep),
             "estimated_arrival_utc": _iso(est_arr),
+            "provider_scheduled_departure_utc": _iso(f.provider_scheduled_departure_utc) if view == "current" else None,
+            "provider_scheduled_arrival_utc": _iso(f.provider_scheduled_arrival_utc) if view == "current" else None,
+            "provider_departure_delay_seconds": f.provider_departure_delay_seconds if view == "current" else None,
+            "provider_arrival_delay_seconds": f.provider_arrival_delay_seconds if view == "current" else None,
             "actual_departure_utc": _iso(actual_dep),
             "actual_arrival_utc": _iso(actual_arr),
+            "provider_flight_id": f.provider_flight_id if view == "current" else None,
             "scheduled_rest_minutes": f.scheduled_rest_minutes,
             "aircraft_type": aircraft_type,
             "registration": registration,
@@ -239,7 +244,8 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
         state = "complete"
 
     rest_start = None
-    if view == "current" and not current and last_completed and last_completed.get("actual_arrival_utc"):
+    is_resting = bool(last_completed and (last_completed.get("scheduled_rest_minutes") or 0) > 0 and next_flight)
+    if view == "current" and not current and is_resting and last_completed and last_completed.get("actual_arrival_utc"):
         arrival = datetime.fromisoformat(last_completed["actual_arrival_utc"])
         rest_start = arrival + timedelta(minutes=REST_RELEASE_BUFFER_MINUTES)
 
@@ -269,6 +275,7 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
         "status": {
             "state": state, "local_timezone": local_tz or "UTC", "local_label": local_label,
             "rest_start_utc": _iso(rest_start), "rest_release_buffer_minutes": REST_RELEASE_BUFFER_MINUTES,
+            "is_resting": is_resting,
             "last_completed_flight_id": last_completed["id"] if last_completed else None,
             "next_flight_id": next_flight["id"] if next_flight else None,
             "position_delay_minutes": int(public_delay_minutes),

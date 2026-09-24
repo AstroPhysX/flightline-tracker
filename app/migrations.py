@@ -12,6 +12,10 @@ def ensure_schema_extensions(engine) -> None:
         "trips": [("ups_trip_id", "INTEGER")],
         "flights": [
             ("scheduled_rest_minutes", "INTEGER"),
+            ("provider_scheduled_departure_utc", "DATETIME"),
+            ("provider_scheduled_arrival_utc", "DATETIME"),
+            ("provider_departure_delay_seconds", "INTEGER"),
+            ("provider_arrival_delay_seconds", "INTEGER"),
             ("last_provider_poll_utc", "DATETIME"),
             ("last_track_poll_utc", "DATETIME"),
             ("last_reassignment_search_utc", "DATETIME"),

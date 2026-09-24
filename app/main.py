@@ -5,7 +5,7 @@ import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -20,7 +20,7 @@ from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdat
 from .services.aeroapi import AeroApiError, test_connection as test_aeroapi_connection
 from .services.airport_resolver import ensure_airport
 from .services.dashboard import build_dashboard, select_trip
-from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from
+from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking
 from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
@@ -32,7 +32,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="1.4.0")
+app = FastAPI(title="Flightline Tracker", version="1.7.0")
 
 
 @app.on_event("startup")
@@ -65,7 +65,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.4.0"}
+    return {"ok": True, "version": "1.7.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -106,14 +106,14 @@ def api_logbook_options(db: Session = Depends(get_db)):
 
 @app.get("/api/logbook/map")
 def api_logbook_map(
-    aircraft_model: str | None = None,
+    aircraft_model: list[str] = Query(default=[]),
     aircraft_ident: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
     db: Session = Depends(get_db),
 ):
     return build_logbook_map(
-        db, aircraft_model=aircraft_model or None, aircraft_ident=aircraft_ident or None,
+        db, aircraft_models=aircraft_model or None, aircraft_ident=aircraft_ident or None,
         start_date=start_date, end_date=end_date,
     )
 
@@ -154,7 +154,12 @@ def dashboard(request: Request, trip_id: int | None = None, view: str = "current
 
 @app.post("/api/viewers/heartbeat")
 def viewer_heartbeat(req: ViewerHeartbeat):
-    return {"ok": True, "active_viewers": viewer_presence.heartbeat(req.viewer_id)}
+    before = viewer_presence.count_active()
+    active = viewer_presence.heartbeat(req.viewer_id)
+    refresh_triggered = False
+    if before == 0 and active > 0:
+        refresh_triggered = tracking_worker.kick_for_viewer()
+    return {"ok": True, "active_viewers": active, "refresh_triggered": refresh_triggered}
 
 
 @app.get("/api/settings/tracking/usage")
@@ -297,6 +302,7 @@ def get_schedule(trip_id: int | None = None, db: Session = Depends(get_db), _adm
             "flight_date": f.flight_date.isoformat(), "origin": f.origin, "destination": f.destination,
             "deadhead": f.deadhead, "scheduled_departure_utc": f.scheduled_departure_utc.isoformat() if f.scheduled_departure_utc else None,
             "scheduled_arrival_utc": f.scheduled_arrival_utc.isoformat() if f.scheduled_arrival_utc else None,
+            "scheduled_rest_minutes": f.scheduled_rest_minutes,
             "schedule_active": f.schedule_active, "schedule_added": f.schedule_added,
             "has_awarded_baseline": bool(f.awarded_flight_number), "change_note": f.schedule_change_note,
             "actual_departure_utc": f.actual_departure_utc.isoformat() if f.actual_departure_utc else None,
@@ -319,6 +325,7 @@ def update_flight_schedule(flight_id: int, req: FlightScheduleUpdate, db: Sessio
         db.rollback()
         raise HTTPException(400, str(exc)) from exc
     snapshot_awarded(flight)
+    clear_provider_tracking(flight)
     flight.flight_number = req.flight_number.upper().strip()
     flight.flight_date = req.flight_date
     flight.origin = req.origin.upper().strip()
@@ -364,6 +371,7 @@ def restore_awarded(flight_id: int, db: Session = Depends(get_db), _admin: None 
         raise HTTPException(404, "No awarded baseline is available for this flight")
     if flight.actual_departure_utc:
         raise HTTPException(400, "Already-flown legs are not rewritten.")
+    clear_provider_tracking(flight)
     flight.flight_number = flight.awarded_flight_number
     flight.flight_date = flight.awarded_flight_date
     flight.origin = flight.awarded_origin
@@ -393,6 +401,7 @@ def restore_full_awarded_schedule(trip_id: int | None = None, db: Session = Depe
             has_awarded = True
             if flight.actual_departure_utc or flight.actual_arrival_utc:
                 continue
+            clear_provider_tracking(flight)
             flight.flight_number = flight.awarded_flight_number
             flight.flight_date = flight.awarded_flight_date
             flight.origin = flight.awarded_origin

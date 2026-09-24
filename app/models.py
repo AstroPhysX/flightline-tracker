@@ -56,6 +56,13 @@ class Flight(Base):
     scheduled_arrival_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     estimated_departure_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     estimated_arrival_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # FlightAware's runway schedule is kept separately from the UPS/PDF schedule.
+    # This avoids silently rewriting the awarded/current itinerary while still
+    # letting the live status card mirror FlightAware's OFF/ON timing.
+    provider_scheduled_departure_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_scheduled_arrival_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    provider_departure_delay_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    provider_arrival_delay_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     actual_departure_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     actual_arrival_utc: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     scheduled_rest_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)

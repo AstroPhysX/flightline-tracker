@@ -312,12 +312,28 @@ def _apply_info(db: Session, flight: Flight, info: dict) -> bool:
     flight.registration = info.get("registration") or flight.registration
     flight.aircraft_type = info.get("aircraft_type") or flight.aircraft_type
 
-    # Use runway Off/On when available because the family display describes
-    # takeoff/landing; fall back to gate Out/In if necessary.
+    # Use runway OFF/ON values because the family display describes actual
+    # takeoff/landing rather than gate OUT/IN. Keep FlightAware's own runway
+    # schedule separately from the UPS/PDF schedule so live status can mirror
+    # the provider without rewriting the awarded/current itinerary.
+    flight.provider_scheduled_departure_utc = _as_utc(info.get("scheduled_off") or info.get("scheduled_out"))
+    flight.provider_scheduled_arrival_utc = _as_utc(info.get("scheduled_on") or info.get("scheduled_in"))
     flight.estimated_departure_utc = _as_utc(info.get("estimated_off") or info.get("estimated_out"))
     flight.estimated_arrival_utc = _as_utc(info.get("estimated_on") or info.get("estimated_in"))
     flight.actual_departure_utc = _as_utc(info.get("actual_off") or info.get("actual_out"))
     flight.actual_arrival_utc = _as_utc(info.get("actual_on") or info.get("actual_in"))
+
+    # AeroAPI exposes these as seconds; they generally align more closely with
+    # FlightAware's own On time/Delayed/Ahead presentation than recomputing
+    # against the PDF schedule.
+    try:
+        flight.provider_departure_delay_seconds = int(info.get("departure_delay")) if info.get("departure_delay") is not None else None
+    except (TypeError, ValueError):
+        flight.provider_departure_delay_seconds = None
+    try:
+        flight.provider_arrival_delay_seconds = int(info.get("arrival_delay")) if info.get("arrival_delay") is not None else None
+    except (TypeError, ValueError):
+        flight.provider_arrival_delay_seconds = None
 
     if info.get("cancelled"):
         flight.status = "cancelled"

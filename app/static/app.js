@@ -28,6 +28,25 @@ const WeatherControl = L.Control.extend({
   }
 });
 new WeatherControl().addTo(map);
+
+const MapOnlyControl = L.Control.extend({
+  options:{position:'bottomright'},
+  onAdd(){
+    const wrap=L.DomUtil.create('div','leaflet-bar map-only-control');
+    const btn=L.DomUtil.create('button','map-only-button',wrap);
+    btn.type='button'; btn.id='map-only-toggle'; btn.textContent='▣'; btn.title=t('map_only');
+    L.DomEvent.disableClickPropagation(wrap);
+    L.DomEvent.on(btn,'click',()=>{
+      document.body.classList.toggle('map-only');
+      const hidden=document.body.classList.contains('map-only');
+      btn.classList.toggle('active',hidden);
+      btn.title=hidden?t('show_ui'):t('map_only');
+      setTimeout(()=>map.invalidateSize(),80);
+    });
+    return wrap;
+  }
+});
+new MapOnlyControl().addTo(map);
 map.createPane('nightPane');
 map.getPane('nightPane').style.zIndex = 330;
 map.getPane('nightPane').style.pointerEvents = 'none';
@@ -44,9 +63,10 @@ map.getPane('weatherPane').style.pointerEvents = 'none';
 // Leaflet adapter used by v4 of this tracker. Pinning the GL layer to v4 keeps
 // Leaflet and the vector basemap synchronized while retaining language-switchable vector labels.
 function mapStyleForTheme(theme = window.TrackerTheme?.theme || 'light') {
-  // Light restores the bright v12 map. Dark uses Liberty rather than the much
-  // darker OpenFreeMap Dark style so the day/night terminator stays visible.
-  return `https://tiles.openfreemap.org/styles/${theme === 'light' ? 'bright' : 'liberty'}`;
+  // v17: Liberty is the normal/light map palette the user preferred. Fiord is
+  // the darker map: clearly darker than Liberty without going back to the
+  // almost-black Dark style that hid the day/night terminator.
+  return `https://tiles.openfreemap.org/styles/${theme === 'light' ? 'liberty' : 'fiord'}`;
 }
 const vectorBase = L.maplibreGL({
   style: mapStyleForTheme(),
@@ -192,9 +212,20 @@ function addRepeatedPolyline(points, style, tooltip) {
 
 function routeStyle(f) {
   const colors=routeColors();
+  // Deadheads always retain a dashed identity, including after completion.
+  // Completed deadheads turn grey like other flown legs but never become solid.
+  if (f.deadhead) {
+    const completed=f.status==='completed' || f.status==='past';
+    const current=f.status==='current';
+    return {
+      color: completed ? colors.flown : (current ? colors.current : colors.deadhead),
+      opacity: current ? 1 : .96,
+      weight: current ? 5.6 : completed ? 3.6 : 4.5,
+      dashArray: '10 8',
+    };
+  }
   if (f.status === 'completed' || f.status === 'past') return { color: colors.flown, opacity: .94, weight: 3.6 };
   if (f.status === 'current') return { color: colors.current, opacity: 1, weight: 6.5 };
-  if (f.deadhead) return { color: colors.deadhead, opacity: .96, weight: 4.5, dashArray: '10 8' };
   return { color: colors.future, opacity: .94, weight: 4.2 };
 }
 
@@ -241,18 +272,75 @@ function bearingDegrees(a,b) {
   return (Math.atan2(y,x)*180/Math.PI+360)%360;
 }
 
+function providerProjectedIso(scheduledIso, delaySeconds, estimatedIso) {
+  const seconds=Number(delaySeconds);
+  if (scheduledIso && Number.isFinite(seconds)) {
+    return new Date(new Date(scheduledIso).getTime()+seconds*1000).toISOString();
+  }
+  return estimatedIso || scheduledIso || null;
+}
+
+function bestDepartureIso(f, {actual=true}={}) {
+  if (!f) return null;
+  if (actual && f.actual_departure_utc) return f.actual_departure_utc;
+  return providerProjectedIso(
+    f.provider_scheduled_departure_utc,
+    f.provider_departure_delay_seconds,
+    f.estimated_departure_utc,
+  ) || f.scheduled_departure_utc;
+}
+
+function bestArrivalIso(f, {actual=true}={}) {
+  if (!f) return null;
+  if (actual && f.actual_arrival_utc) return f.actual_arrival_utc;
+  return providerProjectedIso(
+    f.provider_scheduled_arrival_utc,
+    f.provider_arrival_delay_seconds,
+    f.estimated_arrival_utc,
+  ) || f.scheduled_arrival_utc;
+}
+
+function flightAwareUrl(f) {
+  return `https://www.flightaware.com/live/flight/${encodeURIComponent(String(f?.flight_number||'').toUpperCase())}`;
+}
+
+function fr24FlightIdent(f) {
+  const ident=String(f?.flight_number||'').toUpperCase().replace(/\s+/g,'');
+  const ups=ident.match(/^UPS(\d+)$/);
+  return ups ? `5X${ups[1]}` : ident;
+}
+
+function flightradar24Url(f) {
+  return `https://www.flightradar24.com/data/flights/${encodeURIComponent(fr24FlightIdent(f).toLowerCase())}`;
+}
+
+function flightExternalLinksHtml(f, label=null) {
+  const text=escapeHtml(label || f?.flight_number || '—');
+  return `<span class="flight-external-links"><a class="flight-number-link" href="${flightAwareUrl(f)}" target="_blank" rel="noopener" title="FlightAware">${text}</a><a class="flight-site-mini" href="${flightradar24Url(f)}" target="_blank" rel="noopener" title="Flightradar24">FR24</a></span>`;
+}
+
+function flightLegPopupHtml(f) {
+  const statusKey=f.status==='current'?'status_airborne':`status_${f.status}`;
+  const status=t(statusKey) || f.status;
+  const dep=fmtDallas(bestDepartureIso(f));
+  const arr=fmtDallas(bestArrivalIso(f));
+  const replay=(f.track||[]).length>=2 ? `<button type="button" class="replay-flight-button" onclick="window.startFlightReplay(${Number(f.id)})">${escapeHtml(t('replay_flight'))}</button>` : '';
+  const aircraft=[f.registration,f.aircraft_type].filter(Boolean).map(escapeHtml).join(' · ');
+  const type=f.deadhead ? ` · ${escapeHtml(t('deadhead'))}` : '';
+  return `<div class="leg-popup"><h3>${escapeHtml(t('leg'))} ${escapeHtml(f.sequence)} · ${flightExternalLinksHtml(f)}</h3><div class="leg-popup-route">${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}${type}</div><div class="leg-popup-grid"><span>${escapeHtml(t('status'))}</span><b>${escapeHtml(status)}</b><span>${escapeHtml(t('takeoff_dallas'))}</span><b>${escapeHtml(dep)}</b><span>${escapeHtml(t('landing_dallas'))}</span><b>${escapeHtml(arr)}</b><span>${escapeHtml(t('delay'))}</span><b>${escapeHtml(fmtDelay(f))}</b>${aircraft?`<span>${escapeHtml(t('aircraft'))}</span><b>${aircraft}</b>`:''}</div><div class="leg-popup-actions"><a href="${flightAwareUrl(f)}" target="_blank" rel="noopener">FlightAware ↗</a><a href="${flightradar24Url(f)}" target="_blank" rel="noopener">Flightradar24 ↗</a>${replay}</div></div>`;
+}
+
 function addRouteIndicator(f, points, repeatIndex=0) {
   if (!points?.length) return;
-  // Stagger labels for repeated A↔B legs so their sequence numbers do not sit
-  // directly on top of one another.
   const fractions=[.38,.52,.66,.30,.74];
   const sample=pointAtFraction(points,fractions[repeatIndex % fractions.length]);
   if (!sample) return;
-  const heading=bearingDegrees(sample.before,sample.after)-90; // ➤ points east at 0°
+  const heading=bearingDegrees(sample.before,sample.after)-90;
   const html=`<div class="route-indicator" title="${escapeHtml(t('leg'))} ${f.sequence}: ${escapeHtml(f.flight_number)} ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}"><span class="route-sequence">${escapeHtml(f.sequence)}</span><span class="route-arrow" style="transform:rotate(${heading}deg)">➤</span></div>`;
   const icon=L.divIcon({className:'route-indicator-icon',html,iconSize:[52,28],iconAnchor:[26,14]});
   for (const offset of [-720,-360,0,360,720]) {
-    const marker=L.marker([sample.point[0],sample.point[1]+offset],{icon,pane:'routeIndicatorPane',interactive:false}).addTo(map);
+    const marker=L.marker([sample.point[0],sample.point[1]+offset],{icon,pane:'routeIndicatorPane',interactive:true,keyboard:true}).addTo(map);
+    marker.bindPopup(flightLegPopupHtml(f),{maxWidth:390});
     routeIndicatorLayers.push(marker);
   }
 }
@@ -421,11 +509,33 @@ function updateTimingBadge(f) {
   badge.textContent=timingLabel(f);
 }
 
+function setMetricLabels(primaryKey, secondaryKey) {
+  const a=document.getElementById('primary-time-label');
+  const b=document.getElementById('secondary-time-label');
+  if(a) a.textContent=t(primaryKey);
+  if(b) b.textContent=t(secondaryKey);
+}
+
+function nextFlightDescriptionHtml(next) {
+  if (!next) return '';
+  const when=fmtDallas(bestDepartureIso(next,{actual:false}));
+  const token='__FLIGHT_LINK__';
+  const raw=t('next_flight_status',{when,flight:token,route:`${next.origin} → ${next.destination}`});
+  return escapeHtml(raw).replace(token,flightExternalLinksHtml(next));
+}
+
+function statusMainFlightHtml(f) {
+  return `${flightExternalLinksHtml(f)} · ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}`;
+}
+
 function updateStatusText() {
+  const mainEl=document.getElementById('status-main');
+  const detailEl=document.getElementById('status-detail');
   if (!dashboard || !dashboard.trip) {
-    document.getElementById('status-main').textContent=t('waiting_trip');
-    document.getElementById('status-detail').textContent='';
+    mainEl.textContent=t('waiting_trip');
+    detailEl.textContent='';
     ['takeoff-dallas','landing-dallas','delay','rest-timer'].forEach(id=>document.getElementById(id).textContent='—');
+    setMetricLabels('takeoff_dallas','landing_dallas');
     updateTimingBadge(null);
     return;
   }
@@ -434,39 +544,48 @@ function updateStatusText() {
   const completed=flights.filter(f=>f.status==='completed' || f.status==='past');
   const last=completed.length ? completed[completed.length-1] : null;
   const next=flights.find(f=>f.status==='scheduled');
-  let main='',detail='',delayFocus=null;
-  const nextWhen=next ? fmtDallas(next.estimated_departure_utc || next.scheduled_departure_utc) : null;
-  const nextDescription=next ? t('next_flight_status',{when:nextWhen,flight:next.flight_number,route:`${next.origin} → ${next.destination}`}) : '';
+  let mainHtml='',detailHtml='',delayFocus=null,primaryIso=null,secondaryIso=null;
 
   if (current) {
-    main=`${current.flight_number} · ${current.origin} → ${current.destination}`;
-    const live=[current.registration,current.aircraft_type,current.altitude_ft?`FL${Math.round(current.altitude_ft/100)}`:null,current.groundspeed_kt?`${current.groundspeed_kt} kt`:null,current.last_position_utc?`${t('position')} ${new Date(current.last_position_utc).toLocaleTimeString(currentLocale(),{hour12:false})}`:null].filter(Boolean).join(' · ');
+    mainHtml=statusMainFlightHtml(current);
+    const live=[current.registration,current.aircraft_type,current.altitude_ft?`FL${Math.round(current.altitude_ft/100)}`:null,current.groundspeed_kt?`${current.groundspeed_kt} kt`:null,current.last_position_utc?`${t('position')} ${new Date(current.last_position_utc).toLocaleTimeString(currentLocale(),{hour12:false})}`:null].filter(Boolean).map(escapeHtml).join(' · ');
     const publicDelay=Number(dashboard?.status?.position_delay_minutes || 0);
-    const delayNote=publicDelay>0?t('public_position_delayed',{minutes:publicDelay}):'';
-    detail=[live,delayNote,nextDescription].filter(Boolean).join('  •  ');
+    const delayNote=publicDelay>0?escapeHtml(t('public_position_delayed',{minutes:publicDelay})):'';
+    const nextDescription=nextFlightDescriptionHtml(next);
+    detailHtml=[live,delayNote,nextDescription].filter(Boolean).join('  •  ');
     delayFocus=current;
+    primaryIso=bestDepartureIso(current);
+    secondaryIso=bestArrivalIso(current,{actual:false});
+    setMetricLabels('takeoff_dallas','expected_landing_dallas');
   } else if (last && next) {
-    main=last.status==='completed' ? t('resting_at',{place:last.destination}) : t('last_scheduled_stop',{place:last.destination});
-    detail=nextDescription+(next.deadhead?' · '+t('deadhead'):'');
+    const resting=(last.status==='completed' && dashboard?.status?.is_resting);
+    mainHtml=escapeHtml(resting ? t('resting_at',{place:last.destination}) : t('last_scheduled_stop',{place:last.destination}));
+    detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?` · ${escapeHtml(t('deadhead'))}`:'');
     delayFocus=next;
+    primaryIso=bestArrivalIso(last);
+    secondaryIso=bestDepartureIso(next,{actual:false});
+    setMetricLabels('last_landing_dallas','next_takeoff_dallas');
   } else if (next) {
-    main=`${next.origin} → ${next.destination}`;
-    detail=nextDescription+(next.deadhead?' · '+t('deadhead'):'');
+    mainHtml=`${escapeHtml(next.origin)} → ${escapeHtml(next.destination)}`;
+    detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?` · ${escapeHtml(t('deadhead'))}`:'');
     delayFocus=next;
+    primaryIso=bestDepartureIso(next,{actual:false});
+    secondaryIso=bestArrivalIso(next,{actual:false});
+    setMetricLabels('next_takeoff_dallas','expected_landing_dallas');
   } else if (last) {
-    main=t('trip_complete',{place:last.destination});
-    detail=last.status==='completed' ? t('all_completed') : t('all_past');
+    mainHtml=escapeHtml(t('trip_complete',{place:last.destination}));
+    detailHtml=escapeHtml(last.status==='completed' ? t('all_completed') : t('all_past'));
     delayFocus=last;
+    primaryIso=bestArrivalIso(last);
+    secondaryIso=null;
+    setMetricLabels('landed_dallas','next_takeoff_dallas');
   }
 
-  document.getElementById('status-main').textContent=main || t('waiting_trip');
-  document.getElementById('status-detail').textContent=detail;
+  mainEl.innerHTML=mainHtml || escapeHtml(t('waiting_trip'));
+  detailEl.innerHTML=detailHtml;
   updateTimingBadge(delayFocus);
-
-  const takeoffSource=current || last || next;
-  const landingSource=current || last || next;
-  document.getElementById('takeoff-dallas').textContent=fmtDallas(takeoffSource?.actual_departure_utc || takeoffSource?.estimated_departure_utc || takeoffSource?.scheduled_departure_utc);
-  document.getElementById('landing-dallas').textContent=fmtDallas(landingSource?.actual_arrival_utc || landingSource?.estimated_arrival_utc || landingSource?.scheduled_arrival_utc);
+  document.getElementById('takeoff-dallas').textContent=fmtDallas(primaryIso);
+  document.getElementById('landing-dallas').textContent=fmtDallas(secondaryIso);
   document.getElementById('delay').textContent=fmtDelay(delayFocus);
 }
 
@@ -493,6 +612,76 @@ function updateClocks() {
   }
   const h=Math.floor(diff/3600),m=Math.floor((diff%3600)/60),s=diff%60;
   document.getElementById('rest-timer').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+let replayTimer=null;
+let replayMarker=null;
+let replayFlight=null;
+let replayIndex=0;
+let replaySpeed=1;
+
+function ensureReplayPanel(){
+  let panel=document.getElementById('replay-panel');
+  if(panel) return panel;
+  panel=document.createElement('div');
+  panel.id='replay-panel'; panel.className='replay-panel glass hidden';
+  panel.innerHTML=`<div><strong id="replay-title">Replay</strong><div id="replay-time" class="muted"></div></div><div class="replay-actions"><button id="replay-pause" type="button">⏸</button><button id="replay-speed" type="button">1×</button><button id="replay-stop" type="button">×</button></div>`;
+  document.body.appendChild(panel);
+  panel.querySelector('#replay-pause').onclick=()=>{
+    if(replayTimer){clearInterval(replayTimer);replayTimer=null;panel.querySelector('#replay-pause').textContent='▶';}
+    else {startReplayTimer();panel.querySelector('#replay-pause').textContent='⏸';}
+  };
+  panel.querySelector('#replay-speed').onclick=()=>{replaySpeed=replaySpeed===1?2:replaySpeed===2?4:1;panel.querySelector('#replay-speed').textContent=`${replaySpeed}×`;};
+  panel.querySelector('#replay-stop').onclick=()=>stopFlightReplay();
+  return panel;
+}
+
+function replayPoint(){
+  const track=replayFlight?.track||[];
+  if(!track.length) return null;
+  return track[Math.min(track.length-1,replayIndex)];
+}
+
+function renderReplayPoint(){
+  const p=replayPoint(); if(!p) return;
+  if(replayMarker) map.removeLayer(replayMarker);
+  const icon=L.divIcon({className:'aircraft-div-icon replay-aircraft-icon',html:'<div class="aircraft-marker replay-aircraft"><span>✈</span></div>',iconSize:[38,38],iconAnchor:[19,19]});
+  const replayLon=shiftLonNear(p.lon,map.getCenter().lng);
+  replayMarker=L.marker([p.lat,replayLon],{icon,pane:'aircraftPane',interactive:false}).addTo(map);
+  const panel=ensureReplayPanel();
+  panel.querySelector('#replay-time').textContent=p.captured_utc ? `${fmtDallas(p.captured_utc)} · ${new Date(p.captured_utc).toISOString().replace('.000','')}` : '';
+  if(p.captured_utc) drawNightOverlay(new Date(p.captured_utc));
+}
+
+function startReplayTimer(){
+  if(replayTimer) clearInterval(replayTimer);
+  replayTimer=setInterval(()=>{
+    const track=replayFlight?.track||[];
+    if(!track.length){stopFlightReplay();return;}
+    replayIndex=Math.min(track.length-1,replayIndex+replaySpeed);
+    renderReplayPoint();
+    if(replayIndex>=track.length-1){clearInterval(replayTimer);replayTimer=null;const b=document.getElementById('replay-pause');if(b)b.textContent='▶';}
+  },120);
+}
+
+function startFlightReplay(flightId){
+  const f=(dashboard?.flights||[]).find(x=>Number(x.id)===Number(flightId));
+  if(!f || (f.track||[]).length<2){showWarning(t('replay_unavailable'));return;}
+  stopFlightReplay(false);
+  replayFlight=f; replayIndex=0; replaySpeed=1;
+  const panel=ensureReplayPanel(); panel.classList.remove('hidden');
+  panel.querySelector('#replay-title').textContent=`${t('replay_flight')} · ${f.flight_number} · ${f.origin} → ${f.destination}`;
+  panel.querySelector('#replay-speed').textContent='1×'; panel.querySelector('#replay-pause').textContent='⏸';
+  map.closePopup(); renderReplayPoint(); startReplayTimer();
+}
+window.startFlightReplay=startFlightReplay;
+
+function stopFlightReplay(hide=true){
+  if(replayTimer){clearInterval(replayTimer);replayTimer=null;}
+  if(replayMarker){map.removeLayer(replayMarker);replayMarker=null;}
+  replayFlight=null; replayIndex=0;
+  if(hide) document.getElementById('replay-panel')?.classList.add('hidden');
+  drawNightOverlay(new Date());
 }
 
 async function refresh() {
@@ -614,6 +803,13 @@ async function postManualFlight(body, messageEl){
   return true;
 }
 
+function formatRestMinutes(value){
+  const mins=Number(value||0);
+  if(!mins) return '';
+  const h=Math.floor(mins/60), m=mins%60;
+  return m?`${h}h ${String(m).padStart(2,'0')}`:`${h}h`;
+}
+
 async function loadScheduleEditor(explicitTripId=null){
   const params=new URLSearchParams(location.search);
   const tripId=explicitTripId || params.get('trip_id');
@@ -635,7 +831,8 @@ async function loadScheduleEditor(explicitTripId=null){
     const locked=Boolean(f.actual_departure_utc);
     const badges=[
       f.schedule_added?`<span class="schedule-badge added">${escapeHtml(t('added'))}</span>`:'',
-      f.has_awarded_baseline?`<span class="schedule-badge">${escapeHtml(t('awarded_saved'))}</span>`:''
+      f.has_awarded_baseline?`<span class="schedule-badge">${escapeHtml(t('awarded_saved'))}</span>`:'',
+      f.scheduled_rest_minutes?`<span class="schedule-badge rest">★ ${escapeHtml(t('rest_badge',{time:formatRestMinutes(f.scheduled_rest_minutes)}))}</span>`:''
     ].join('');
     row.innerHTML=`
       <div class="schedule-row-head"><div class="schedule-row-title">${escapeHtml(t('leg'))} ${f.sequence||'—'} · ${escapeHtml(f.flight_number)} · ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}</div><div class="schedule-badges">${badges}</div></div>
@@ -796,7 +993,7 @@ async function sendViewerHeartbeat(){
   if(document.visibilityState!=='visible') return;
   try{
     const res=await fetch('/api/viewers/heartbeat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({viewer_id:viewerId}),cache:'no-store'});
-    if(res.ok){const data=await res.json();lastViewerCount=Number(data.active_viewers||0);updateViewerText();}
+    if(res.ok){const data=await res.json();lastViewerCount=Number(data.active_viewers||0);updateViewerText();if(data.refresh_triggered){setTimeout(refresh,7000);setTimeout(refresh,16000);}}
   }catch(_){ }
 }
 function updateViewerText(){
@@ -909,6 +1106,7 @@ document.addEventListener('tracker-language-change',async(ev)=>{
   applyMapLanguage(ev.detail?.language || window.TrackerI18n.language);
   weatherCredit.innerHTML=`${t('radar_credit').replace('RainViewer','')}<a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>`;
   const weatherBtn=document.getElementById('weather-toggle'); if(weatherBtn) weatherBtn.title=weatherEnabled?t('weather_on'):t('weather_off');
+  const mapOnlyBtn=document.getElementById('map-only-toggle'); if(mapOnlyBtn) mapOnlyBtn.title=document.body.classList.contains('map-only')?t('show_ui'):t('map_only');
   updateProviderHelp();
   updateClocks();
   updateStatusText();

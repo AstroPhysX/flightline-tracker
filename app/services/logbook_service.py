@@ -368,7 +368,7 @@ def import_logbook_csv(db: Session, raw: bytes) -> dict:
 
 def _filtered_entries(
     db: Session,
-    aircraft_model: str | None = None,
+    aircraft_models: list[str] | None = None,
     aircraft_ident: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
@@ -379,8 +379,9 @@ def _filtered_entries(
         .filter(func.upper(func.coalesce(LogbookEntry.aircraft_ident, "")) != "SIM")
         .filter(~func.upper(func.coalesce(LogbookEntry.aircraft_model, "")).like("%SIM%"))
     )
-    if aircraft_model:
-        q = q.filter(LogbookEntry.aircraft_model == aircraft_model)
+    models = [m.strip() for m in (aircraft_models or []) if m and m.strip()]
+    if models:
+        q = q.filter(LogbookEntry.aircraft_model.in_(models))
     if aircraft_ident:
         q = q.filter(LogbookEntry.aircraft_ident == aircraft_ident)
     if start_date:
@@ -410,14 +411,24 @@ def logbook_options(db: Session) -> dict:
 
 def build_logbook_map(
     db: Session,
-    aircraft_model: str | None = None,
+    aircraft_models: list[str] | None = None,
     aircraft_ident: str | None = None,
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict:
-    entries = _filtered_entries(db, aircraft_model, aircraft_ident, start_date, end_date)
+    entries = _filtered_entries(db, aircraft_models, aircraft_ident, start_date, end_date)
 
     airport_counts: Counter[str] = Counter()
+    airport_entry_counts: Counter[str] = Counter()
+    airport_departures: Counter[str] = Counter()
+    airport_arrivals: Counter[str] = Counter()
+    airport_hours: defaultdict[str, float] = defaultdict(float)
+    airport_models: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    airport_idents: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    airport_connections: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    airport_first_date: dict[str, date] = {}
+    airport_last_date: dict[str, date] = {}
+
     route_counts: Counter[tuple[str, str]] = Counter()
     route_hours: defaultdict[tuple[str, str], float] = defaultdict(float)
     route_duration_samples: Counter[tuple[str, str]] = Counter()
@@ -439,8 +450,22 @@ def build_logbook_map(
         if entry.aircraft_model:
             model_counts[entry.aircraft_model] += 1
             model_hours[entry.aircraft_model] += hours
+
+        visited_codes = []
         for visit in entry.visits:
-            airport_counts[visit.airport_code] += 1
+            code = visit.airport_code
+            airport_counts[code] += 1
+            visited_codes.append(code)
+            airport_first_date[code] = min(airport_first_date.get(code, entry.flight_date), entry.flight_date)
+            airport_last_date[code] = max(airport_last_date.get(code, entry.flight_date), entry.flight_date)
+        for code in set(visited_codes):
+            airport_entry_counts[code] += 1
+            airport_hours[code] += hours
+            if entry.aircraft_model:
+                airport_models[code][entry.aircraft_model] += 1
+            if entry.aircraft_ident:
+                airport_idents[code][entry.aircraft_ident] += 1
+
         if entry.visits:
             map_entries += 1
             if entry.aircraft_model:
@@ -450,6 +475,10 @@ def build_logbook_map(
         for leg in legs:
             key = (leg.origin, leg.destination)
             route_counts[key] += 1
+            airport_departures[leg.origin] += 1
+            airport_arrivals[leg.destination] += 1
+            airport_connections[leg.origin][leg.destination] += 1
+            airport_connections[leg.destination][leg.origin] += 1
             if share > 0:
                 route_hours[key] += share
                 route_duration_samples[key] += 1
@@ -478,6 +507,24 @@ def build_logbook_map(
         points.append({
             "code": code, "name": a.name, "city": a.city,
             "lat": a.latitude, "lon": a.longitude, "visits": visits,
+            "flights": airport_entry_counts[code],
+            "departures": airport_departures[code],
+            "arrivals": airport_arrivals[code],
+            "hours": round(airport_hours[code], 1),
+            "date_first": airport_first_date.get(code).isoformat() if airport_first_date.get(code) else None,
+            "date_last": airport_last_date.get(code).isoformat() if airport_last_date.get(code) else None,
+            "aircraft_models": [
+                {"model": model, "flights": count}
+                for model, count in airport_models[code].most_common(10)
+            ],
+            "registrations": [
+                {"ident": ident, "flights": count}
+                for ident, count in airport_idents[code].most_common(8)
+            ],
+            "connections": [
+                {"code": other, "flights": count}
+                for other, count in airport_connections[code].most_common(10)
+            ],
         })
 
     routes = []
@@ -535,7 +582,7 @@ def build_logbook_map(
 
     return {
         "filters": {
-            "aircraft_model": aircraft_model, "aircraft_ident": aircraft_ident,
+            "aircraft_models": aircraft_models or [], "aircraft_ident": aircraft_ident,
             "start_date": start_date.isoformat() if start_date else None,
             "end_date": end_date.isoformat() if end_date else None,
         },

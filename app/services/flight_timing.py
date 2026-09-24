@@ -11,36 +11,87 @@ def _utc(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
-def timing_summary(flight) -> dict:
-    """Return a simple schedule-performance summary for UI/history.
+def _delay_result(seconds: int | None, basis: str | None) -> dict | None:
+    if seconds is None:
+        return None
+    minutes = int(round(float(seconds) / 60.0))
+    if minutes > 0:
+        flag = "delayed"
+    elif minutes < 0:
+        flag = "ahead"
+    else:
+        flag = "on_time"
+    return {"flag": flag, "minutes": minutes, "basis": basis}
 
-    Completed legs use arrival performance when available. Airborne/upcoming
-    legs use departure performance. This avoids pretending an estimated arrival
-    was an observed historical result.
+
+def timing_summary(flight) -> dict:
+    """Return the status-card/history timing summary.
+
+    Prefer FlightAware's own departure/arrival delay values when present. They
+    are expressed in seconds and are what best mirrors the provider's status
+    presentation. When those are unavailable, compare actual/estimated runway
+    OFF/ON values to FlightAware's scheduled runway times, then fall back to the
+    UPS/PDF schedule.
+
+    Context rules:
+      * completed -> arrival performance
+      * airborne  -> expected/actual arrival performance when possible
+      * upcoming  -> departure performance
     """
     actual_arr = _utc(getattr(flight, "actual_arrival_utc", None))
-    sched_arr = _utc(getattr(flight, "scheduled_arrival_utc", None))
-    est_arr = _utc(getattr(flight, "estimated_arrival_utc", None))
     actual_dep = _utc(getattr(flight, "actual_departure_utc", None))
-    sched_dep = _utc(getattr(flight, "scheduled_departure_utc", None))
+    est_arr = _utc(getattr(flight, "estimated_arrival_utc", None))
     est_dep = _utc(getattr(flight, "estimated_departure_utc", None))
 
-    basis = None
-    scheduled = None
-    effective = None
-    if actual_arr and sched_arr:
-        basis, scheduled, effective = "arrival", sched_arr, actual_arr
-    elif actual_dep and sched_dep:
-        basis, scheduled, effective = "departure", sched_dep, actual_dep
-    elif est_dep and sched_dep:
-        basis, scheduled, effective = "departure", sched_dep, est_dep
-    elif est_arr and sched_arr:
-        basis, scheduled, effective = "arrival", sched_arr, est_arr
+    provider_sched_arr = _utc(getattr(flight, "provider_scheduled_arrival_utc", None))
+    provider_sched_dep = _utc(getattr(flight, "provider_scheduled_departure_utc", None))
+    sched_arr = provider_sched_arr or _utc(getattr(flight, "scheduled_arrival_utc", None))
+    sched_dep = provider_sched_dep or _utc(getattr(flight, "scheduled_departure_utc", None))
 
-    if not scheduled or not effective:
-        return {"flag": "unknown", "minutes": None, "basis": basis}
+    provider_arr_delay = getattr(flight, "provider_arrival_delay_seconds", None)
+    provider_dep_delay = getattr(flight, "provider_departure_delay_seconds", None)
 
-    minutes = int(round((effective - scheduled).total_seconds() / 60.0))
+    # Completed flight: arrival result is what people generally care about.
+    if actual_arr:
+        provider = _delay_result(provider_arr_delay, "arrival")
+        if provider:
+            return provider
+        if sched_arr:
+            minutes = int(round((actual_arr - sched_arr).total_seconds() / 60.0))
+            return _minutes_result(minutes, "arrival")
+
+    # Airborne: show expected arrival performance, not stale departure delay.
+    if actual_dep and not actual_arr:
+        provider = _delay_result(provider_arr_delay, "arrival")
+        if provider:
+            return provider
+        if est_arr and sched_arr:
+            minutes = int(round((est_arr - sched_arr).total_seconds() / 60.0))
+            return _minutes_result(minutes, "arrival")
+        provider = _delay_result(provider_dep_delay, "departure")
+        if provider:
+            return provider
+        if sched_dep:
+            minutes = int(round((actual_dep - sched_dep).total_seconds() / 60.0))
+            return _minutes_result(minutes, "departure")
+
+    # Upcoming: departure delay/status.
+    provider = _delay_result(provider_dep_delay, "departure")
+    if provider:
+        return provider
+    if est_dep and sched_dep:
+        minutes = int(round((est_dep - sched_dep).total_seconds() / 60.0))
+        return _minutes_result(minutes, "departure")
+
+    # Last fallback for partially-populated historical data.
+    if est_arr and sched_arr:
+        minutes = int(round((est_arr - sched_arr).total_seconds() / 60.0))
+        return _minutes_result(minutes, "arrival")
+
+    return {"flag": "unknown", "minutes": None, "basis": None}
+
+
+def _minutes_result(minutes: int, basis: str) -> dict:
     if minutes > 0:
         flag = "delayed"
     elif minutes < 0:
