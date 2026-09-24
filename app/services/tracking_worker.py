@@ -15,9 +15,7 @@ from .weather_archive import archive_for_flight
 
 _STOP = threading.Event()
 _THREAD: threading.Thread | None = None
-_VIEWER_KICK_LOCK = threading.Lock()
 _RUN_LOCK = threading.Lock()
-_LAST_VIEWER_KICK: datetime | None = None
 
 
 def _utc(value):
@@ -92,7 +90,10 @@ def _run_once_unlocked(*, force: bool = False) -> dict:
                 # lifetime logbook map. Later Logbook Pro imports supersede the
                 # automatic copy rather than duplicating it.
                 refreshed = db.get(Flight, flight.id)
-                if refreshed and refreshed.actual_departure_utc and not refreshed.actual_arrival_utc:
+                # Weather replay is optional context, not core tracking. Only
+                # archive it while somebody is actually watching the live map;
+                # this avoids background network/storage churn on a NAS.
+                if active_viewers > 0 and refreshed and refreshed.actual_departure_utc and not refreshed.actual_arrival_utc:
                     archive_for_flight(refreshed)
                 if refreshed and refreshed.actual_arrival_utc and not refreshed.deadhead:
                     sync_completed_flight_to_logbook(db, refreshed)
@@ -114,9 +115,8 @@ def _run_once_unlocked(*, force: bool = False) -> dict:
 
 
 def run_once(*, force: bool = False) -> dict:
-    # Viewer-arrival refreshes and the normal background loop may wake at nearly
-    # the same moment. Serialize them so one page open cannot accidentally
-    # generate duplicate paid API calls.
+    # Serialize background/manual syncs so duplicate paid API calls cannot run
+    # at the same time.
     if not _RUN_LOCK.acquire(blocking=False):
         return {"provider": "busy", "polled": 0, "skipped": "tracking sync already running"}
     try:
@@ -126,19 +126,8 @@ def run_once(*, force: bool = False) -> dict:
 
 
 def kick_for_viewer() -> bool:
-    """Request one fresh tracking sync when the first live viewer arrives.
-
-    The normal worker still enforces the flight window and budget. A five-minute
-    cooldown prevents browser reconnects from turning this into extra polling.
-    """
-    global _LAST_VIEWER_KICK
-    now = datetime.now(timezone.utc)
-    with _VIEWER_KICK_LOCK:
-        if _LAST_VIEWER_KICK and (now - _LAST_VIEWER_KICK) < timedelta(minutes=5):
-            return False
-        _LAST_VIEWER_KICK = now
-    threading.Thread(target=lambda: run_once(force=True), name="viewer-tracking-refresh", daemon=True).start()
-    return True
+    """Compatibility no-op. Viewer arrival no longer forces a paid API sync."""
+    return False
 
 
 def _loop() -> None:

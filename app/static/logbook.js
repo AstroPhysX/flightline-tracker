@@ -1,5 +1,6 @@
 const {t,toggle:toggleLanguage,locale:currentLocale}=window.TrackerI18n;
-const map=L.map('logbook-map',{zoomControl:false,worldCopyJump:false,minZoom:1,maxBounds:[[-85.0511,-1000000],[85.0511,1000000]],maxBoundsViscosity:1}).setView([25,0],2);
+const map=L.map('logbook-map',{zoomControl:false,worldCopyJump:false,minZoom:1,preferCanvas:true,maxBounds:[[-85.0511,-1000000],[85.0511,1000000]],maxBoundsViscosity:1}).setView([25,0],2);
+const pathRenderer=L.canvas({padding:.35});
 L.control.zoom({position:'bottomright'}).addTo(map);
 
 const MapOnlyControl=L.Control.extend({
@@ -32,19 +33,19 @@ function cssVar(name,fallback=''){return getComputedStyle(document.documentEleme
 
 let routeLayers=[],pointLayers=[],routeRecords=[],pointRecords=[],lastData=null,didFit=false,focusMode=null;
 function clearLayers(){[...routeLayers,...pointLayers].forEach(l=>map.removeLayer(l));routeLayers=[];pointLayers=[];routeRecords=[];pointRecords=[];focusMode=null;}
-function greatCirclePoints(a,b,steps=72){const toR=x=>x*Math.PI/180,toD=x=>x*180/Math.PI;const lat1=toR(a[0]),lon1=toR(a[1]),lat2=toR(b[0]),lon2=toR(b[1]);const v1=[Math.cos(lat1)*Math.cos(lon1),Math.cos(lat1)*Math.sin(lon1),Math.sin(lat1)],v2=[Math.cos(lat2)*Math.cos(lon2),Math.cos(lat2)*Math.sin(lon2),Math.sin(lat2)];let dot=Math.max(-1,Math.min(1,v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2]));const omega=Math.acos(dot),sin=Math.sin(omega);if(omega<1e-8)return[a,b];const out=[];for(let i=0;i<=steps;i++){const f=i/steps,s1=Math.sin((1-f)*omega)/sin,s2=Math.sin(f*omega)/sin,x=s1*v1[0]+s2*v2[0],y=s1*v1[1]+s2*v2[1],z=s1*v1[2]+s2*v2[2];out.push([toD(Math.atan2(z,Math.hypot(x,y))),toD(Math.atan2(y,x))]);}return out;}
+function greatCirclePoints(a,b,steps=32){const toR=x=>x*Math.PI/180,toD=x=>x*180/Math.PI;const lat1=toR(a[0]),lon1=toR(a[1]),lat2=toR(b[0]),lon2=toR(b[1]);const v1=[Math.cos(lat1)*Math.cos(lon1),Math.cos(lat1)*Math.sin(lon1),Math.sin(lat1)],v2=[Math.cos(lat2)*Math.cos(lon2),Math.cos(lat2)*Math.sin(lon2),Math.sin(lat2)];let dot=Math.max(-1,Math.min(1,v1[0]*v2[0]+v1[1]*v2[1]+v1[2]*v2[2]));const omega=Math.acos(dot),sin=Math.sin(omega);if(omega<1e-8)return[a,b];const out=[];for(let i=0;i<=steps;i++){const f=i/steps,s1=Math.sin((1-f)*omega)/sin,s2=Math.sin(f*omega)/sin,x=s1*v1[0]+s2*v2[0],y=s1*v1[1]+s2*v2[1],z=s1*v1[2]+s2*v2[2];out.push([toD(Math.atan2(z,Math.hypot(x,y))),toD(Math.atan2(y,x))]);}return out;}
 function unwrap(points){if(!points.length)return[];const out=[[points[0][0],points[0][1]]];let prev=points[0][1];for(const [lat,raw] of points.slice(1)){let lon=raw;while(lon-prev>180)lon-=360;while(lon-prev<-180)lon+=360;out.push([lat,lon]);prev=lon;}return out;}
 function routeKey(a,b){return [a,b].sort().join('|');}
 function addRepeatedRoute(r,points,opts,tooltip,popupHtml){
   const base=unwrap(points), key=routeKey(r.origin,r.destination);
   const lineOpts={...opts}; const casingExtra=Number(lineOpts.casingExtra??1.2); const casingOpacity=Number(lineOpts.casingOpacity??Math.min(.75,(lineOpts.opacity??.7)+.16));
   delete lineOpts.casingExtra; delete lineOpts.casingOpacity;
-  for(const offset of[-720,-360,0,360,720]){
+  for(const offset of[-360,0,360]){
     const shifted=base.map(([lat,lon])=>[lat,lon+offset]);
-    const casing=L.polyline(shifted,{...lineOpts,color:cssVar('--logbook-casing','#041016'),opacity:casingOpacity,weight:(lineOpts.weight||1)+casingExtra,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(map);
-    const line=L.polyline(shifted,{...lineOpts,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(map);
+    const casing=L.polyline(shifted,{...lineOpts,renderer:pathRenderer,color:cssVar('--logbook-casing','#041016'),opacity:casingOpacity,weight:(lineOpts.weight||1)+casingExtra,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(map);
+    const line=L.polyline(shifted,{...lineOpts,renderer:pathRenderer,interactive:false,lineCap:'round',lineJoin:'round'}).addTo(map);
     // Wide invisible hit target: visually thin lifetime routes remain easy to click.
-    const hit=L.polyline(shifted,{color:'#000',opacity:.001,weight:Math.max(18,(lineOpts.weight||1)+14),interactive:true,lineCap:'round',lineJoin:'round'}).addTo(map);
+    const hit=L.polyline(shifted,{renderer:pathRenderer,color:'#000',opacity:.001,weight:Math.max(14,(lineOpts.weight||1)+10),interactive:true,lineCap:'round',lineJoin:'round'}).addTo(map);
     hit.bindTooltip(tooltip,{sticky:true}); hit.bindPopup(popupHtml,{maxWidth:360});
     hit.on('click',e=>{if(e.originalEvent)L.DomEvent.stopPropagation(e.originalEvent);focusRoute(key);});
     routeLayers.push(casing,line,hit);
@@ -101,7 +102,7 @@ function draw(data){
   const connections=mergedConnections(data.routes||[]).sort((a,b)=>a.count-b.count);const maxRouteCount=Math.max(1,...connections.map(r=>Number(r.count||1)));
   for(const r of connections){const visual=routeVisual(r.count,maxRouteCount);addRepeatedRoute(r,greatCirclePoints([r.origin_lat,r.origin_lon],[r.destination_lat,r.destination_lon]),{...visual,color:cssVar('--logbook-route','#0071d9')},`${airportDisplay(r.origin,r.origin_city,r.origin_name)} ↔ ${airportDisplay(r.destination,r.destination_city,r.destination_name)} · ${t('flights_count',{count:r.count})} · ${t('hours_count',{hours:fmt(r.hours,1)})}`,routeDetailsHtml(r));}
   const bounds=[];
-  for(const p of data.airports||[]){const radius=Math.min(12,3+Math.log2((p.visits||1)+1)*1.25);for(const offset of[-360,0,360]){const c=L.circleMarker([p.lat,p.lon+offset],{radius,weight:1.8,color:cssVar('--logbook-airport-stroke','#07131f'),fillColor:cssVar('--logbook-airport-fill','#35b9f2'),fillOpacity:.92,className:'logbook-airport-marker'}).addTo(map);c.bindTooltip(`${airportDisplay(p.code,p.city,p.name)} · ${t('visits_count',{count:p.visits})}`,{sticky:true});c.bindPopup(airportDetailsHtml(p),{maxWidth:360});c.on('click',e=>{if(e.originalEvent)L.DomEvent.stopPropagation(e.originalEvent);focusAirport(p.code);});pointLayers.push(c);pointRecords.push({code:p.code,layer:c,baseRadius:radius});}bounds.push([p.lat,p.lon]);}
+  for(const p of data.airports||[]){const radius=Math.min(12,3+Math.log2((p.visits||1)+1)*1.25);for(const offset of[-360,0,360]){const c=L.circleMarker([p.lat,p.lon+offset],{renderer:pathRenderer,radius,weight:1.8,color:cssVar('--logbook-airport-stroke','#07131f'),fillColor:cssVar('--logbook-airport-fill','#35b9f2'),fillOpacity:.92,className:'logbook-airport-marker'}).addTo(map);c.bindTooltip(`${airportDisplay(p.code,p.city,p.name)} · ${t('visits_count',{count:p.visits})}`,{sticky:true});c.bindPopup(airportDetailsHtml(p),{maxWidth:360});c.on('click',e=>{if(e.originalEvent)L.DomEvent.stopPropagation(e.originalEvent);focusAirport(p.code);});pointLayers.push(c);pointRecords.push({code:p.code,layer:c,baseRadius:radius});}bounds.push([p.lat,p.lon]);}
   if(!didFit&&bounds.length){map.fitBounds(bounds,{padding:[45,45],maxZoom:4});didFit=true;} renderInsights(data);
 }
 function renderInsights(data){const models=document.getElementById('lb-top-models'),aps=document.getElementById('lb-top-airports'),routes=document.getElementById('lb-top-routes');models.innerHTML=(data.top_models||[]).slice(0,6).map(x=>`<div><strong>${x.model}</strong><span>${t('flights_count',{count:x.flights})} · ${t('mapped_count',{count:x.mapped||0})} · ${t('hours_count',{hours:fmt(x.hours,1)})}</span></div>`).join('');aps.innerHTML=(data.top_airports||[]).slice(0,6).map(x=>`<div><strong>${x.city||x.code} ${x.code}</strong><span>${t('visits_count',{count:x.visits})}</span></div>`).join('');routes.innerHTML=(data.top_routes||[]).slice(0,6).map(x=>`<div><strong>${airportDisplay(x.origin,x.origin_city)} → ${airportDisplay(x.destination,x.destination_city)}</strong><span>${t('flights_count',{count:x.flights})}</span></div>`).join('');}

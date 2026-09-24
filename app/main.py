@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile, Query
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import func
@@ -32,7 +33,8 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="1.8.0")
+app = FastAPI(title="Flightline Tracker", version="1.9.0")
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
 @app.on_event("startup")
@@ -65,7 +67,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.8.0"}
+    return {"ok": True, "version": "1.9.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -159,12 +161,11 @@ def dashboard(request: Request, trip_id: int | None = None, view: str = "current
 
 @app.post("/api/viewers/heartbeat")
 def viewer_heartbeat(req: ViewerHeartbeat):
-    before = viewer_presence.count_active()
+    # Heartbeats only control the normal viewer-aware polling cadence. Opening
+    # a browser must never force an extra paid AeroAPI query. The background
+    # worker will pick the viewer up on its next normal cycle.
     active = viewer_presence.heartbeat(req.viewer_id)
-    refresh_triggered = False
-    if before == 0 and active > 0:
-        refresh_triggered = tracking_worker.kick_for_viewer()
-    return {"ok": True, "active_viewers": active, "refresh_triggered": refresh_triggered}
+    return {"ok": True, "active_viewers": active, "refresh_triggered": False}
 
 
 @app.get("/api/settings/tracking/usage")

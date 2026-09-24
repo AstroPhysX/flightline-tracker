@@ -1094,7 +1094,7 @@ async function sendViewerHeartbeat(){
   if(document.visibilityState!=='visible') return;
   try{
     const res=await fetch('/api/viewers/heartbeat',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({viewer_id:viewerId}),cache:'no-store'});
-    if(res.ok){const data=await res.json();lastViewerCount=Number(data.active_viewers||0);updateViewerText();if(data.refresh_triggered){setTimeout(refresh,7000);setTimeout(refresh,16000);}}
+    if(res.ok){const data=await res.json();lastViewerCount=Number(data.active_viewers||0);updateViewerText();}
   }catch(_){ }
 }
 function updateViewerText(){

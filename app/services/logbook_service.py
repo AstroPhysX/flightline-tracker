@@ -4,8 +4,9 @@ import csv
 import hashlib
 import io
 import re
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, OrderedDict
 from datetime import date, datetime
+import threading
 from typing import Iterable
 
 from sqlalchemy import func
@@ -13,6 +14,27 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..models import Airport, Flight, LogbookAirportVisit, LogbookEntry, LogbookLeg
 from .airport_resolver import ensure_airport, canonical_airport_groups
+
+_CACHE_LOCK = threading.RLock()
+_MAP_CACHE: OrderedDict[tuple, dict] = OrderedDict()
+_OPTIONS_CACHE: dict | None = None
+_ROUTE_TIME_CACHE: dict[tuple, dict] = {}
+_MAP_CACHE_LIMIT = 12
+
+
+def invalidate_logbook_caches() -> None:
+    """Clear derived in-memory logbook data after an import or new flight.
+
+    The lifetime logbook changes rarely, while dashboard/map endpoints are read
+    constantly. Keeping these derived results in RAM is much cheaper on a NAS
+    than rebuilding them from thousands of ORM rows on every browser refresh.
+    """
+    global _OPTIONS_CACHE
+    with _CACHE_LOCK:
+        _MAP_CACHE.clear()
+        _ROUTE_TIME_CACHE.clear()
+        _OPTIONS_CACHE = None
+
 
 EXPECTED_COLUMNS = [
     "DATE", "AIRCRAFT MAKE & MODEL", "AIRCRAFT IDENT", "FLIGHT #", "ROUTE OF FLIGHT",
@@ -220,6 +242,7 @@ def sync_completed_flight_to_logbook(db: Session, flight: Flight, *, commit: boo
     _set_entry_route(db, entry, [flight.origin.upper(), flight.destination.upper()])
     if commit:
         db.commit()
+    invalidate_logbook_caches()
     return True
 
 
@@ -349,6 +372,7 @@ def import_logbook_csv(db: Session, raw: bytes) -> dict:
             mapped_entries += 1
 
     db.commit()
+    invalidate_logbook_caches()
     non_sim_rows = [r for r in rows if not _is_sim_record(r)]
     dates = [_date(r["DATE"]) for r in non_sim_rows]
     return {
@@ -392,6 +416,10 @@ def _filtered_entries(
 
 
 def logbook_options(db: Session) -> dict:
+    global _OPTIONS_CACHE
+    with _CACHE_LOCK:
+        if _OPTIONS_CACHE is not None:
+            return _OPTIONS_CACHE
     q = (
         db.query(LogbookEntry)
         .filter(func.upper(func.coalesce(LogbookEntry.aircraft_ident, "")) != "SIM")
@@ -400,13 +428,16 @@ def logbook_options(db: Session) -> dict:
     entries = q.order_by(LogbookEntry.flight_date.asc(), LogbookEntry.id.asc()).all()
     models = sorted({e.aircraft_model for e in entries if e.aircraft_model}, key=str.casefold)
     idents = sorted({e.aircraft_ident for e in entries if e.aircraft_ident}, key=str.casefold)
-    return {
+    result = {
         "models": models,
         "idents": idents,
         "date_start": entries[0].flight_date.isoformat() if entries else None,
         "date_end": entries[-1].flight_date.isoformat() if entries else None,
         "entry_count": len(entries),
     }
+    with _CACHE_LOCK:
+        _OPTIONS_CACHE = result
+    return result
 
 
 def _haversine_nm_coords(a: tuple[float, float], b: tuple[float, float]) -> float:
@@ -458,7 +489,7 @@ def _entry_route_speed_check(entry: LogbookEntry, alias_map: dict[str, str], air
     }
 
 
-def route_time_estimate(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
+def _route_time_estimate_uncached(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
     """Historical average flight time for a city-pair from the imported logbook.
 
     Direction is respected first (winds matter).  If there are no same-direction
@@ -510,7 +541,7 @@ def route_time_estimate(db: Session, origin: str, destination: str, aircraft_mod
         basis = "reverse_direction"
     if not vals and normalized_model:
         # If aircraft-specific history is unavailable, fall back to all types.
-        return route_time_estimate(db, origin, destination, None)
+        return _route_time_estimate_uncached(db, origin, destination, None)
     if not vals:
         return {"average_hours": None, "samples": 0, "estimated": False, "basis": None}
     return {
@@ -522,7 +553,20 @@ def route_time_estimate(db: Session, origin: str, destination: str, aircraft_mod
     }
 
 
-def build_logbook_map(
+
+def route_time_estimate(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
+    key = ((origin or "").strip().upper(), (destination or "").strip().upper(), _tracker_model(aircraft_model) if aircraft_model else None)
+    with _CACHE_LOCK:
+        cached = _ROUTE_TIME_CACHE.get(key)
+        if cached is not None:
+            return cached
+    result = _route_time_estimate_uncached(db, origin, destination, aircraft_model)
+    with _CACHE_LOCK:
+        _ROUTE_TIME_CACHE[key] = result
+    return result
+
+
+def _build_logbook_map_uncached(
     db: Session,
     aircraft_models: list[str] | None = None,
     aircraft_ident: str | None = None,
@@ -751,8 +795,32 @@ def build_logbook_map(
     }
 
 
+def build_logbook_map(
+    db: Session,
+    aircraft_models: list[str] | None = None,
+    aircraft_ident: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    models_key = tuple(sorted(m.strip() for m in (aircraft_models or []) if m and m.strip()))
+    key = (models_key, (aircraft_ident or "").strip(), start_date.isoformat() if start_date else "", end_date.isoformat() if end_date else "")
+    with _CACHE_LOCK:
+        cached = _MAP_CACHE.get(key)
+        if cached is not None:
+            _MAP_CACHE.move_to_end(key)
+            return cached
+    result = _build_logbook_map_uncached(db, list(models_key) or None, aircraft_ident, start_date, end_date)
+    with _CACHE_LOCK:
+        _MAP_CACHE[key] = result
+        _MAP_CACHE.move_to_end(key)
+        while len(_MAP_CACHE) > _MAP_CACHE_LIMIT:
+            _MAP_CACHE.popitem(last=False)
+    return result
+
+
 def clear_logbook(db: Session) -> dict:
     count = db.query(LogbookEntry).count()
     db.query(LogbookEntry).delete(synchronize_session=False)
     db.commit()
+    invalidate_logbook_caches()
     return {"ok": True, "deleted_entries": count}

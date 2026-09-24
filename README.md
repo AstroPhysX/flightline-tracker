@@ -74,7 +74,7 @@ The included `.github/workflows/docker-publish.yml` runs whenever `main` is upda
 ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
 ```
 
-It also publishes version tags such as `:v18.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
+It also publishes version tags such as `:v19.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
 
 ### First-time GHCR setup
 
@@ -116,11 +116,11 @@ Do not use `main` as a scratch branch once Watchtower is auto-deploying `:stable
 Once a version is known-good:
 
 ```bash
-git tag v18.0
-git push origin v18.0
+git tag v19.0
+git push origin v19.0
 ```
 
-That gives you a fixed `:v18.0` image that can be used for rollback even after `:stable` moves forward.
+That gives you a fixed `:v19.0` image that can be used for rollback even after `:stable` moves forward.
 
 ## Watchtower updates
 
@@ -167,7 +167,9 @@ If a Logbook Pro record contains several legs but only one total duration, the p
 
 ### Historical weather
 
-Flightline Tracker now supports lightweight replay weather. For recent flights, replay can use RainViewer's short public historical window directly. For future tracked flights, v18 also saves one low-resolution radar tile near the aircraft about every 30 minutes while airborne. These snapshots live under persistent `/data/weather/<flight_id>/` and are used only for replay context; the tracker does **not** archive an entire global radar mosaic. A 12-hour flight normally produces about 24 small PNG snapshots. Day/night geometry is still reconstructed mathematically from the saved track timestamps and requires no stored imagery.
+Replay weather is deliberately storage-limited. For recent flights, replay can use RainViewer's short public historical window directly. For future tracked flights, v19 saves at most one low-resolution radar tile per hour **and only while at least one live viewer is present**. By default it keeps no more than 24 snapshots per flight and caps the entire `/data/weather/` archive at 250 MB, pruning the oldest radar images first. Saved AeroAPI tracks are never removed by this weather cap.
+
+The defaults can be changed with `WEATHER_ARCHIVE_INTERVAL_MINUTES`, `WEATHER_ARCHIVE_MAX_PER_FLIGHT`, and `WEATHER_ARCHIVE_MAX_MB`. Day/night geometry is reconstructed mathematically from saved track timestamps and requires no stored imagery.
 
 ## Admin cookie / reverse-proxy behavior
 
@@ -196,3 +198,15 @@ If upgrading from an older stack that explicitly sets `ADMIN_COOKIE_SECURE: "tru
 - The old elapsed rest timer is now a live **Next flight in** countdown to the next planned/provider-adjusted takeoff.
 - Current-leg popups show scheduled duration plus a typical historical flight time derived from the imported logbook when samples exist.
 - Replay uses saved radar snapshots when available and falls back to RainViewer's recent public archive when the replay timestamp is still inside that window.
+
+
+## v19 NAS performance pass
+
+- Opening the live map no longer triggers an immediate paid AeroAPI refresh. Viewer heartbeats only switch the normal background worker between the configured live-view interval and the slower no-viewer interval. Use **Sync now** in Admin mode when an immediate provider refresh is genuinely needed.
+- Dashboard historical route-time lookups are cached in memory and cleared only when the lifetime logbook changes.
+- Lifetime-logbook map results and filter/options data are cached server-side. Reopening the same view does not rebuild thousands of derived counters from SQLite.
+- Large JSON responses are gzip-compressed at a low CPU level.
+- The lifetime map uses Leaflet Canvas rather than thousands of SVG DOM nodes, uses three world copies rather than five, and uses fewer great-circle segments. Wide invisible click targets are preserved.
+- Replay-weather storage defaults to one snapshot/hour, 24 per flight, 250 MB total, and only archives while the live map has a viewer.
+
+These changes are aimed specifically at lower-power Synology hardware.
