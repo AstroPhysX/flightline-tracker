@@ -84,12 +84,12 @@ document.getElementById('logbook-import-close')?.addEventListener('click',()=>lo
 
 document.getElementById('logbook-import-submit')?.addEventListener('click',async()=>{
   if(!(await window.TrackerAdmin.ensure())) return;
-  const input=document.getElementById('logbook-csv');
-  if(!input?.files?.[0]){logbookMessage.className='hint api-error';logbookMessage.textContent=t('logbook_csv');return;}
+  const input=document.getElementById('logbook-file');
+  if(!input?.files?.[0]){logbookMessage.className='hint api-error';logbookMessage.textContent=t('logbook_file');return;}
   const btn=document.getElementById('logbook-import-submit'); btn.disabled=true;
   logbookMessage.className='hint';logbookMessage.textContent=t('logbook_importing');
   try{
-    const form=new FormData(); form.append('logbook_csv',input.files[0]);
+    const form=new FormData(); form.append('logbook_file',input.files[0]);
     const res=await fetch('/api/logbook/import',{method:'POST',body:form});
     if(res.status===401){window.TrackerAdmin.handleUnauthorized(res);return;}
     const data=await res.json(); if(!res.ok) throw new Error(data.detail || t('logbook_import_failed'));

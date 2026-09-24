@@ -26,23 +26,26 @@ from .services import tracker_settings, tracking_worker, viewer_presence, admin_
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
 from .services.ups_pdf_import import import_awarded_line_pdfs
-from .services.logbook_service import import_logbook_csv, logbook_options, build_logbook_map, clear_logbook, backfill_completed_tracker_flights
+from .services.logbook_service import import_logbook_csv, import_logbook_lbk, logbook_options, build_logbook_map, clear_logbook, backfill_completed_tracker_flights
 
 BASE_DIR = Path(__file__).resolve().parent
 backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="1.9.0")
+app = FastAPI(title="Flightline Tracker", version="2.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
 @app.on_event("startup")
 def _start_tracking_worker():
     generated = admin_auth.ensure_admin_password()
+    # v20 keeps only three tiny replay-weather frames per flight. Collapse any
+    # older hourly archive once at startup before the background worker begins.
+    weather_archive.prune_archive()
     if generated:
         print("\n" + "=" * 72)
-        print("UPS TRACKER ADMIN PASSWORD GENERATED (shown only on first creation):")
+        print("FLIGHTLINE TRACKER ADMIN PASSWORD GENERATED (shown only on first creation):")
         print(generated)
         print("Save this password. Only its salted hash is stored under /data.")
         print("=" * 72 + "\n")
@@ -67,7 +70,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "1.9.0"}
+    return {"ok": True, "version": "2.0.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -127,17 +130,18 @@ def api_logbook_map(
 
 @app.post("/api/logbook/import")
 async def api_logbook_import(
-    logbook_csv: UploadFile = File(...),
+    logbook_file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _admin: None = Depends(admin_auth.require_admin),
 ):
-    if not logbook_csv.filename or not logbook_csv.filename.lower().endswith(".csv"):
-        raise HTTPException(400, "Choose a Logbook Pro CSV export.")
-    raw = await logbook_csv.read()
-    if len(raw) > 25 * 1024 * 1024:
-        raise HTTPException(413, "The logbook CSV is unexpectedly large.")
+    filename = (logbook_file.filename or "").lower()
+    if not filename.endswith((".csv", ".lbk")):
+        raise HTTPException(400, "Choose a Logbook Pro CSV or native .lbk file.")
+    raw = await logbook_file.read()
+    if len(raw) > 100 * 1024 * 1024:
+        raise HTTPException(413, "The logbook file is unexpectedly large.")
     try:
-        return import_logbook_csv(db, raw)
+        return import_logbook_lbk(db, raw) if filename.endswith(".lbk") else import_logbook_csv(db, raw)
     except ValueError as exc:
         db.rollback()
         raise HTTPException(400, str(exc)) from exc
@@ -153,10 +157,14 @@ def api_logbook_clear(
 
 @app.get("/api/dashboard")
 def dashboard(request: Request, trip_id: int | None = None, view: str = "current", db: Session = Depends(get_db)):
+    cfg = tracker_settings.load()
     delay = 0
     if not admin_auth.is_admin(request):
-        delay = int(tracker_settings.load().get("public_delay_minutes", 10))
-    return build_dashboard(db, trip_id=trip_id, view=view, public_delay_minutes=delay)
+        delay = int(cfg.get("public_delay_minutes", 10))
+    return build_dashboard(
+        db, trip_id=trip_id, view=view, public_delay_minutes=delay,
+        local_clock_name=str(cfg.get("local_clock_name") or "Jerome"),
+    )
 
 
 @app.post("/api/viewers/heartbeat")
@@ -484,7 +492,7 @@ def save_tracking_settings(req: TrackingSettingsUpdate, _admin: None = Depends(a
     provider = req.provider.strip().lower()
     if provider not in tracker_settings.PROVIDERS:
         raise HTTPException(400, "Unsupported tracking provider")
-    cfg = tracker_settings.save(provider, req.api_key, req.poll_seconds, req.monthly_budget_usd, req.public_delay_minutes)
+    cfg = tracker_settings.save(provider, req.api_key, req.poll_seconds, req.monthly_budget_usd, req.public_delay_minutes, req.local_clock_name)
     return tracker_settings.public(cfg)
 
 

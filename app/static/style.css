@@ -81,6 +81,11 @@ button:hover, .topbar a:hover, .map-trip-link:hover { background:var(--button-ho
 .flight-card { margin:18px 0; padding:15px 0; border-top:1px solid var(--border); border-bottom:1px solid var(--border); }
 .status-main { font-size:20px; font-weight:760; margin:5px 0 3px; }
 .muted, .hint { color:var(--muted); }
+
+.status-telemetry { display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:7px; font-size:12px; color:var(--muted); }
+.status-telemetry span { white-space:nowrap; }
+.status-next-flight { margin-top:8px; padding-top:8px; border-top:1px solid var(--soft-border); font-size:12px; line-height:1.45; color:var(--muted); }
+.status-note { display:block; margin-top:6px; font-size:11px; color:var(--muted); }
 .metrics-grid { display:grid; grid-template-columns:1fr 1fr; gap:13px 18px; }
 .metrics-grid div { display:flex; flex-direction:column; gap:4px; }
 .metrics-grid span { color:var(--muted); font-size:12px; }

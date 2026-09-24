@@ -29,6 +29,7 @@ class TrackingSettingsUpdate(BaseModel):
     poll_seconds: int = Field(default=600, ge=60)
     monthly_budget_usd: float = Field(default=4.50, ge=0)
     public_delay_minutes: int = Field(default=10, ge=0, le=120)
+    local_clock_name: str = Field(default="Jerome", min_length=1, max_length=40)
 
 
 class FlightScheduleUpdate(BaseModel):

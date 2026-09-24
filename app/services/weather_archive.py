@@ -13,10 +13,9 @@ from ..config import settings
 from ..models import Flight
 
 RAINVIEWER_META = "https://api.rainviewer.com/public/weather-maps.json"
-ARCHIVE_INTERVAL = timedelta(minutes=max(15, int(os.getenv("WEATHER_ARCHIVE_INTERVAL_MINUTES", "60"))))
 ARCHIVE_ZOOM = 4
-MAX_FLIGHT_SNAPSHOTS = max(1, int(os.getenv("WEATHER_ARCHIVE_MAX_PER_FLIGHT", "24")))
-GLOBAL_LIMIT_BYTES = max(16, int(os.getenv("WEATHER_ARCHIVE_MAX_MB", "250"))) * 1024 * 1024
+MAX_FLIGHT_SNAPSHOTS = 3
+GLOBAL_LIMIT_BYTES = max(16, int(os.getenv("WEATHER_ARCHIVE_MAX_MB", "100"))) * 1024 * 1024
 
 
 def _root() -> Path:
@@ -129,31 +128,53 @@ def _tile_bounds(x: int, y: int, zoom: int) -> dict:
     return {"south": south, "west": west, "north": north, "east": east}
 
 
-def archive_for_flight(flight: Flight) -> dict | None:
-    """Archive one compact RainViewer radar tile near an airborne aircraft.
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
-    This intentionally stores one low-resolution tile no more often than the configured archive interval. It is replay context, not a complete meteorological archive.
-    Any network/weather failure is non-fatal and should never affect tracking.
+
+def _snapshot_phase(flight: Flight, rows: list[dict], now: datetime) -> str | None:
+    """Choose one of exactly three replay-weather moments: begin/middle/end."""
+    phases = {str(row.get("phase") or "") for row in rows}
+    if flight.actual_arrival_utc:
+        return "end" if "end" not in phases else None
+    dep = _aware(flight.actual_departure_utc)
+    if dep is None:
+        return None
+    if "begin" not in phases:
+        return "begin"
+    end = _aware(flight.estimated_arrival_utc or flight.provider_scheduled_arrival_utc or flight.scheduled_arrival_utc)
+    if end and end > dep:
+        progress = max(0.0, min(1.25, (now - dep).total_seconds() / (end - dep).total_seconds()))
+        if "middle" not in phases and progress >= 0.42:
+            return "middle"
+        if "end" not in phases and progress >= 0.82:
+            return "end"
+    return None
+
+
+def archive_for_flight(flight: Flight) -> dict | None:
+    """Archive at most three compact RainViewer tiles for replay.
+
+    One tile is kept near the beginning, one around the middle, and one near the
+    end/landing. This runs independently of whether a browser is watching, so a
+    later replay still has approximate weather context without continuously
+    archiving radar throughout a long flight.
     """
-    if not flight.actual_departure_utc or flight.actual_arrival_utc:
+    if not flight.actual_departure_utc:
         return None
     if flight.current_latitude is None or flight.current_longitude is None:
         return None
 
     now = datetime.now(timezone.utc)
     rows = _load_index(flight.id)
-    if rows:
-        try:
-            last = datetime.fromisoformat(str(rows[-1].get("captured_utc") or "").replace("Z", "+00:00"))
-            if last.tzinfo is None:
-                last = last.replace(tzinfo=timezone.utc)
-            if now - last < ARCHIVE_INTERVAL:
-                return None
-        except Exception:
-            pass
+    phase = _snapshot_phase(flight, rows, now)
+    if phase is None:
+        return None
 
     try:
-        meta_res = httpx.get(RAINVIEWER_META, timeout=12.0, follow_redirects=True, headers={"User-Agent": "Flightline-Tracker/1.9"})
+        meta_res = httpx.get(RAINVIEWER_META, timeout=12.0, follow_redirects=True, headers={"User-Agent": "Flightline-Tracker/2.0"})
         meta_res.raise_for_status()
         payload = meta_res.json()
         frames = list((payload.get("radar") or {}).get("past") or [])
@@ -162,21 +183,20 @@ def archive_for_flight(flight: Flight) -> dict | None:
         if not host or not frame or not frame.get("path"):
             return None
         frame_time = int(frame.get("time") or payload.get("generated") or now.timestamp())
-        if rows and any(int(r.get("radar_time") or 0) == frame_time for r in rows[-3:]):
-            return None
 
         x, y = _tile_xy(float(flight.current_latitude), float(flight.current_longitude), ARCHIVE_ZOOM)
         url = f"{host}{frame['path']}/256/{ARCHIVE_ZOOM}/{x}/{y}/2/1_1.png"
-        tile_res = httpx.get(url, timeout=15.0, follow_redirects=True, headers={"User-Agent": "Flightline-Tracker/1.9"})
+        tile_res = httpx.get(url, timeout=15.0, follow_redirects=True, headers={"User-Agent": "Flightline-Tracker/2.0"})
         tile_res.raise_for_status()
         ctype = (tile_res.headers.get("content-type") or "").lower()
         if "image" not in ctype and not tile_res.content.startswith(b"\x89PNG"):
             return None
 
-        filename = f"{frame_time}_z{ARCHIVE_ZOOM}_{x}_{y}.png"
+        filename = f"{phase}_{frame_time}_z{ARCHIVE_ZOOM}_{x}_{y}.png"
         path = _flight_dir(flight.id) / filename
         path.write_bytes(tile_res.content)
         row = {
+            "phase": phase,
             "captured_utc": now.isoformat(),
             "radar_time": frame_time,
             "radar_time_utc": datetime.fromtimestamp(frame_time, tz=timezone.utc).isoformat(),
@@ -196,6 +216,7 @@ def archive_for_flight(flight: Flight) -> dict | None:
         return row
     except Exception:
         return None
+
 
 
 def list_snapshots(flight_id: int) -> list[dict]:
@@ -222,3 +243,45 @@ def delete_flight_weather(flight_id: int) -> None:
     path = _root() / str(int(flight_id))
     if path.exists():
         shutil.rmtree(path, ignore_errors=True)
+
+
+def prune_archive() -> dict:
+    """Collapse legacy hourly archives to at most begin/middle/end per flight."""
+    root = _root()
+    removed_files = 0
+    kept_files = 0
+    for flight_dir in root.iterdir():
+        if not flight_dir.is_dir() or not flight_dir.name.isdigit():
+            continue
+        flight_id = int(flight_dir.name)
+        rows = [row for row in _load_index(flight_id) if str(row.get("file") or "")]
+        existing = [row for row in rows if (flight_dir / str(row.get("file"))).exists()]
+        if len(existing) <= 3 and all(row.get("phase") for row in existing):
+            kept_files += len(existing)
+            continue
+        existing.sort(key=lambda row: int(row.get("radar_time") or 0))
+        selected: list[dict] = []
+        if existing:
+            selected.append({**existing[0], "phase": "begin"})
+        if len(existing) >= 3:
+            selected.append({**existing[len(existing)//2], "phase": "middle"})
+        if len(existing) >= 2:
+            selected.append({**existing[-1], "phase": "end"})
+        # De-duplicate a tiny archive where first/middle/last point to the same file.
+        dedup: dict[str, dict] = {}
+        for row in selected:
+            dedup[str(row.get("file"))] = row
+        selected = list(dedup.values())
+        keep = {str(row.get("file")) for row in selected}
+        for row in existing:
+            filename = str(row.get("file"))
+            if filename not in keep:
+                try:
+                    (flight_dir / filename).unlink(missing_ok=True)
+                    removed_files += 1
+                except OSError:
+                    pass
+        _save_index(flight_id, selected)
+        kept_files += len(selected)
+    _enforce_global_limit()
+    return {"removed": removed_files, "kept": kept_files}

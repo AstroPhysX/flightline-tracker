@@ -90,10 +90,10 @@ def _run_once_unlocked(*, force: bool = False) -> dict:
                 # lifetime logbook map. Later Logbook Pro imports supersede the
                 # automatic copy rather than duplicating it.
                 refreshed = db.get(Flight, flight.id)
-                # Weather replay is optional context, not core tracking. Only
-                # archive it while somebody is actually watching the live map;
-                # this avoids background network/storage churn on a NAS.
-                if active_viewers > 0 and refreshed and refreshed.actual_departure_utc and not refreshed.actual_arrival_utc:
+                # Replay weather is deliberately tiny: exactly three local
+                # snapshots per flight (begin/middle/end). It is independent of
+                # viewer presence so replay still has context if nobody watched live.
+                if refreshed and refreshed.actual_departure_utc:
                     archive_for_flight(refreshed)
                 if refreshed and refreshed.actual_arrival_utc and not refreshed.deadhead:
                     sync_completed_flight_to_logbook(db, refreshed)

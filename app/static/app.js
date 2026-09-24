@@ -50,11 +50,14 @@ new MapOnlyControl().addTo(map);
 map.createPane('nightPane');
 map.getPane('nightPane').style.zIndex = 330;
 map.getPane('nightPane').style.pointerEvents = 'none';
+map.createPane('routePane');
+map.getPane('routePane').style.zIndex = 410;
+map.createPane('currentRoutePane');
+map.getPane('currentRoutePane').style.zIndex = 450;
 map.createPane('routeIndicatorPane');
-map.getPane('routeIndicatorPane').style.zIndex = 455;
-map.getPane('routeIndicatorPane').style.pointerEvents = 'none';
+map.getPane('routeIndicatorPane').style.zIndex = 465;
 map.createPane('aircraftPane');
-map.getPane('aircraftPane').style.zIndex = 470;
+map.getPane('aircraftPane').style.zIndex = 480;
 map.createPane('weatherPane');
 map.getPane('weatherPane').style.zIndex = 325;
 map.getPane('weatherPane').style.pointerEvents = 'none';
@@ -217,21 +220,22 @@ function addRepeatedPolyline(points, style, tooltip) {
 
 function routeStyle(f) {
   const colors=routeColors();
+  const pane=f.status==='current' ? 'currentRoutePane' : 'routePane';
   // Deadheads always retain a dashed identity, including after completion.
-  // Completed deadheads turn grey like other flown legs but never become solid.
   if (f.deadhead) {
     const completed=f.status==='completed' || f.status==='past';
     const current=f.status==='current';
     return {
+      pane,
       color: completed ? colors.flown : (current ? colors.current : colors.deadhead),
       opacity: current ? 1 : .96,
-      weight: current ? 5.6 : completed ? 3.6 : 4.5,
+      weight: current ? 6.2 : completed ? 3.6 : 4.5,
       dashArray: '10 8',
     };
   }
-  if (f.status === 'completed' || f.status === 'past') return { color: colors.flown, opacity: .94, weight: 3.6 };
-  if (f.status === 'current') return { color: colors.current, opacity: 1, weight: 6.5 };
-  return { color: colors.future, opacity: .94, weight: 4.2 };
+  if (f.status === 'completed' || f.status === 'past') return { pane, color: colors.flown, opacity: .94, weight: 3.6 };
+  if (f.status === 'current') return { pane, color: colors.current, opacity: 1, weight: 7.2 };
+  return { pane, color: colors.future, opacity: .94, weight: 4.2 };
 }
 
 function escapeHtml(s) {
@@ -360,9 +364,11 @@ function flightLegPopupHtml(f) {
   const aircraft=[f.registration,f.aircraft_type].filter(Boolean).map(escapeHtml).join(' · ');
   const type=f.deadhead ? ` · ${escapeHtml(t('deadhead'))}` : '';
   const scheduled=f.scheduled_duration_minutes!=null?formatMinutesDuration(f.scheduled_duration_minutes):'—';
-  const typical=f.historical_average_hours!=null?formatHoursDuration(f.historical_average_hours):'—';
-  const typicalNote=f.historical_samples?` (${f.historical_samples}×${f.historical_duration_estimated?'*':''})`:'';
-  return `<div class="leg-popup"><h3>${escapeHtml(t('leg'))} ${escapeHtml(f.sequence)} · ${flightExternalLinksHtml(f)}</h3><div class="leg-popup-route">${escapeHtml(flightRouteText(f))}${type}</div><div class="leg-popup-grid"><span>${escapeHtml(t('status'))}</span><b>${escapeHtml(status)}</b><span>${escapeHtml(t('takeoff_dallas'))}</span><b>${escapeHtml(dep)}</b><span>${escapeHtml(t('landing_dallas'))}</span><b>${escapeHtml(arr)}</b><span>${escapeHtml(t('delay'))}</span><b>${escapeHtml(fmtDelay(f))}</b><span>${escapeHtml(t('scheduled_flight_time'))}</span><b>${escapeHtml(scheduled)}</b><span>${escapeHtml(t('typical_flight_time'))}</span><b>${escapeHtml(typical+typicalNote)}</b>${aircraft?`<span>${escapeHtml(t('aircraft'))}</span><b>${aircraft}</b>`:''}</div><div class="leg-popup-actions"><a href="${flightAwareUrl(f)}" target="_blank" rel="noopener">FlightAware ↗</a><a href="${flightradar24Url(f)}" target="_blank" rel="noopener">Flightradar24 ↗</a>${replay}</div></div>`;
+  const hasLogged=f.historical_average_hours!=null;
+  const typical=hasLogged?formatHoursDuration(f.historical_average_hours):formatHoursDuration(f.route_estimated_hours);
+  const typicalNote=hasLogged && f.historical_samples?` (${f.historical_samples}×${f.historical_duration_estimated?'*':''})`:'';
+  const typicalLabel=hasLogged?t('typical_flight_time'):t('estimated_flight_time');
+  return `<div class="leg-popup"><h3>${escapeHtml(t('leg'))} ${escapeHtml(f.sequence)} · ${flightExternalLinksHtml(f)}</h3><div class="leg-popup-route">${escapeHtml(flightRouteText(f))}${type}</div><div class="leg-popup-grid"><span>${escapeHtml(t('status'))}</span><b>${escapeHtml(status)}</b><span>${escapeHtml(t('takeoff_dallas'))}</span><b>${escapeHtml(dep)}</b><span>${escapeHtml(t('landing_dallas'))}</span><b>${escapeHtml(arr)}</b><span>${escapeHtml(t('delay'))}</span><b>${escapeHtml(fmtDelay(f))}</b><span>${escapeHtml(t('scheduled_flight_time'))}</span><b>${escapeHtml(scheduled)}</b><span>${escapeHtml(typicalLabel)}</span><b>${escapeHtml(typical+typicalNote)}</b>${aircraft?`<span>${escapeHtml(t('aircraft'))}</span><b>${aircraft}</b>`:''}</div><div class="leg-popup-actions"><a href="${flightAwareUrl(f)}" target="_blank" rel="noopener">FlightAware ↗</a><a href="${flightradar24Url(f)}" target="_blank" rel="noopener">Flightradar24 ↗</a>${replay}</div></div>`;
 }
 
 
@@ -471,16 +477,17 @@ function drawDashboard(data) {
     const track=(f.track || []).map(p=>[p.lat,p.lon]);
     let indicatorPath=[];
 
+    // Keep the leg number/arrow anchored to the planned city-pair path even
+    // while the actual current track is still sparse. This prevents the marker
+    // from disappearing as a leg switches into Current state.
+    indicatorPath=greatCirclePoints(a,b);
     if (f.status==='current' && track.length>=2) {
       addRepeatedPolyline(track,routeStyle(f),tooltip);
-      indicatorPath=track;
       const last=track[track.length-1];
-      addRepeatedPolyline(greatCirclePoints(last,b),{...routeStyle(f),opacity:.62,weight:4,dashArray:'6 7'},`${tooltip} · ${t('planned_remainder')}`);
+      addRepeatedPolyline(greatCirclePoints(last,b),{...routeStyle(f),opacity:.72,weight:4.6,dashArray:'6 7'},`${tooltip} · ${t('planned_remainder')}`);
     } else if (f.status==='completed' && track.length>=2) {
       addRepeatedPolyline(track,routeStyle(f),tooltip);
-      indicatorPath=track;
     } else {
-      indicatorPath=greatCirclePoints(a,b);
       addRepeatedPolyline(indicatorPath,routeStyle(f),tooltip);
     }
 
@@ -520,9 +527,8 @@ function fmtDallas(iso) {
 
 function timingLabel(f) {
   const timing=f?.timing || {};
-  const mins=Number(timing.minutes);
-  if(timing.flag==='delayed' && Number.isFinite(mins)) return `${t('delayed')} · +${Math.abs(mins)}m`;
-  if(timing.flag==='ahead' && Number.isFinite(mins)) return `${t('ahead')} · −${Math.abs(mins)}m`;
+  if(timing.flag==='delayed') return t('delayed');
+  if(timing.flag==='ahead') return t('ahead');
   if(timing.flag==='on_time') return t('on_time');
   return t('timing_unknown');
 }
@@ -556,8 +562,10 @@ function nextFlightDescriptionHtml(next) {
   if (!next) return '';
   const when=fmtDallas(bestDepartureIso(next,{actual:false}));
   const token='__FLIGHT_LINK__';
-  const typical=next.historical_average_hours!=null?` · ${t('typical_short',{time:formatHoursDuration(next.historical_average_hours)})}`:'';
-  const raw=t('next_flight_status',{when,flight:token,route:flightRouteText(next)})+typical;
+  const reference=next.historical_average_hours!=null
+    ? ` · ${t('typical_short',{time:formatHoursDuration(next.historical_average_hours)})}`
+    : next.route_estimated_hours!=null ? ` · ${t('estimated_short',{time:formatHoursDuration(next.route_estimated_hours)})}` : '';
+  const raw=t('next_flight_status',{when,flight:token,route:flightRouteText(next)})+reference;
   return escapeHtml(raw).replace(token,flightExternalLinksHtml(next));
 }
 
@@ -585,11 +593,11 @@ function updateStatusText() {
 
   if (current) {
     mainHtml=statusMainFlightHtml(current);
-    const live=[current.registration,current.aircraft_type,current.altitude_ft?`FL${Math.round(current.altitude_ft/100)}`:null,current.groundspeed_kt?`${current.groundspeed_kt} kt`:null,current.last_position_utc?`${t('position')} ${new Date(current.last_position_utc).toLocaleTimeString(currentLocale(),{hour12:false})}`:null].filter(Boolean).map(escapeHtml).join(' · ');
+    const telemetry=[current.registration,current.aircraft_type,current.altitude_ft?`FL${Math.round(current.altitude_ft/100)}`:null,current.groundspeed_kt?`${current.groundspeed_kt} kt`:null,current.last_position_utc?`${t('position')} ${new Date(current.last_position_utc).toLocaleTimeString(currentLocale(),{hour12:false})}`:null].filter(Boolean).map(escapeHtml);
     const publicDelay=Number(dashboard?.status?.position_delay_minutes || 0);
-    const delayNote=publicDelay>0?escapeHtml(t('public_position_delayed',{minutes:publicDelay})):'';
+    const delayNote=publicDelay>0?`<span class="status-note">${escapeHtml(t('public_position_delayed',{minutes:publicDelay}))}</span>`:'';
     const nextDescription=nextFlightDescriptionHtml(next);
-    detailHtml=[live,delayNote,nextDescription].filter(Boolean).join('  •  ');
+    detailHtml=`<div class="status-telemetry">${telemetry.map(x=>`<span>${x}</span>`).join('')}</div>${delayNote}${nextDescription?`<div class="status-next-flight">${nextDescription}</div>`:''}`;
     delayFocus=current;
     primaryIso=bestDepartureIso(current);
     secondaryIso=bestArrivalIso(current,{actual:false});
@@ -631,7 +639,9 @@ function updateClocks() {
   document.getElementById('dallas-time').textContent=new Intl.DateTimeFormat(currentLocale(),{timeZone:'America/Chicago',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
   const tz=dashboard?.status?.local_timezone || 'UTC';
   const label=dashboard?.status?.local_label;
-  document.getElementById('local-label').textContent=label ? `${t('jerome_time')} · ${label}` : t('jerome_time');
+  const clockName=dashboard?.status?.local_clock_name || 'Jerome';
+  const clockTitle=t('custom_time_label',{name:clockName});
+  document.getElementById('local-label').textContent=label ? `${clockTitle} · ${label}` : clockTitle;
   try {
     document.getElementById('local-time').textContent=new Intl.DateTimeFormat(currentLocale(),{timeZone:tz,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
   } catch { document.getElementById('local-time').textContent='--:--'; }
@@ -1128,6 +1138,7 @@ document.getElementById('settings-button').onclick=async()=>{
   document.getElementById('tracking-poll-seconds').value=cfg.poll_seconds || 600;
   document.getElementById('tracking-budget').value=cfg.monthly_budget_usd ?? 4.5;
   document.getElementById('tracking-public-delay').value=cfg.public_delay_minutes ?? 10;
+  document.getElementById('tracking-local-clock-name').value=cfg.local_clock_name || 'Jerome';
   document.getElementById('tracking-message').textContent='';
   const spent=Number(cfg.local_estimated_spend_usd || 0).toFixed(3);
   const remaining=Number(cfg.local_estimated_remaining_usd || 0).toFixed(3);
@@ -1147,6 +1158,7 @@ document.getElementById('save-tracking-settings').onclick=async()=>{
     poll_seconds:Number(document.getElementById('tracking-poll-seconds').value),
     monthly_budget_usd:Number(document.getElementById('tracking-budget').value),
     public_delay_minutes:Number(document.getElementById('tracking-public-delay').value),
+    local_clock_name:document.getElementById('tracking-local-clock-name').value.trim() || 'Jerome',
   };
   const res=await adminFetch('/api/settings/tracking',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
   if(!res) return;

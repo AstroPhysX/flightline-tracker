@@ -5,12 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="darkreader-lock">
   <meta name="theme-color" content="#11151b">
-  <title data-i18n="app_title">UPS Family Flight Tracker</title>
+  <title data-i18n="app_title">Flightline Tracker</title>
   <link rel="manifest" href="/static/manifest.webmanifest">
-  <script src="/static/theme.js?v=19"></script>
+  <script src="/static/theme.js?v=20"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/static/style.css?v=19">
+  <link rel="stylesheet" href="/static/style.css?v=20">
 </head>
 <body>
   <div id="map"></div>
@@ -136,6 +136,7 @@
         <label><span data-i18n="polling_interval">Polling interval (seconds)</span><input id="tracking-poll-seconds" type="number" min="60" step="60" value="600"></label>
         <label><span data-i18n="monthly_budget">Monthly budget guard ($)</span><input id="tracking-budget" type="number" min="0" step="0.25" value="4.50"></label>
         <label><span data-i18n="public_delay">Public position delay (minutes)</span><input id="tracking-public-delay" type="number" min="0" max="120" step="5" value="10"></label>
+        <label><span data-i18n="local_clock_name">Local clock name</span><input id="tracking-local-clock-name" type="text" maxlength="40" value="Jerome" placeholder="Jerome"></label>
       </div>
       <p class="hint" id="provider-help"></p>
       <div class="button-row"><button type="button" id="save-tracking-settings" data-i18n="save">Save</button><button type="button" id="test-tracking-settings" data-i18n="test_connection">Test connection</button><button type="button" id="sync-tracking-now" data-i18n="sync_now">Sync now</button></div>
@@ -157,8 +158,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
-  <script src="/static/i18n.js?v=19"></script>
-  <script src="/static/admin.js?v=19"></script>
-  <script src="/static/app.js?v=19"></script>
+  <script src="/static/i18n.js?v=20"></script>
+  <script src="/static/admin.js?v=20"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

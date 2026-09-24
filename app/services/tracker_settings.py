@@ -26,6 +26,7 @@ DEFAULTS = {
     "poll_seconds": 600,
     "monthly_budget_usd": 4.50,
     "public_delay_minutes": 10,
+    "local_clock_name": "Jerome",
 }
 
 
@@ -73,7 +74,7 @@ def key_for(provider: str, cfg: dict | None = None) -> str:
     return str((cfg.get("api_keys") or {}).get(provider, "")).strip()
 
 
-def save(provider: str, api_key: str | None, poll_seconds: int, monthly_budget_usd: float, public_delay_minutes: int = 10) -> dict:
+def save(provider: str, api_key: str | None, poll_seconds: int, monthly_budget_usd: float, public_delay_minutes: int = 10, local_clock_name: str = "Jerome") -> dict:
     cfg = load()
     cfg["provider"] = provider
     # Preserve only credentials that were explicitly saved in /data. Environment
@@ -93,6 +94,7 @@ def save(provider: str, api_key: str | None, poll_seconds: int, monthly_budget_u
     cfg["poll_seconds"] = max(60, int(poll_seconds))
     cfg["monthly_budget_usd"] = max(0.0, float(monthly_budget_usd))
     cfg["public_delay_minutes"] = max(0, min(120, int(public_delay_minutes)))
+    cfg["local_clock_name"] = (local_clock_name or "Jerome").strip()[:40] or "Jerome"
 
     path = settings_path()
     path.write_text(json.dumps(cfg, indent=2))
@@ -116,6 +118,7 @@ def public(cfg: dict | None = None) -> dict:
         "poll_seconds": int(cfg.get("poll_seconds", 600)),
         "monthly_budget_usd": budget,
         "public_delay_minutes": int(cfg.get("public_delay_minutes", 10)),
+        "local_clock_name": str(cfg.get("local_clock_name") or "Jerome"),
         "local_estimated_spend_usd": float(usage.get("estimated_spend_usd", 0.0)),
         "local_estimated_remaining_usd": max(0.0, budget - float(usage.get("estimated_spend_usd", 0.0))),
         "local_call_counts": usage.get("calls", {}),

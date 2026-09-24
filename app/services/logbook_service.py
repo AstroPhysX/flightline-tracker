@@ -3,7 +3,11 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 from collections import Counter, defaultdict, OrderedDict
 from datetime import date, datetime
 import threading
@@ -238,7 +242,7 @@ def sync_completed_flight_to_logbook(db: Session, flight: Flight, *, commit: boo
     elif flight.scheduled_departure_utc and flight.scheduled_arrival_utc:
         seconds = (flight.scheduled_arrival_utc - flight.scheduled_departure_utc).total_seconds()
         entry.duration_hours = round(max(0.0, seconds / 3600.0), 2)
-    entry.remarks = "Automatically added by UPS Family Flight Tracker"
+    entry.remarks = "Automatically added by Flightline Tracker"
     _set_entry_route(db, entry, [flight.origin.upper(), flight.destination.upper()])
     if commit:
         db.commit()
@@ -259,6 +263,253 @@ def backfill_completed_tracker_flights(db: Session) -> int:
             added += 1
     db.commit()
     return added
+
+
+
+
+def _norm_col(name: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
+
+
+def _row_get(row: dict[str, str], *aliases: str) -> str:
+    normalized = {_norm_col(k): v for k, v in row.items()}
+    for alias in aliases:
+        value = normalized.get(_norm_col(alias))
+        if value is not None and str(value).strip() != "":
+            return str(value).strip()
+    return ""
+
+
+def _normalize_native_date(value: str) -> str:
+    text = _clean(value)
+    if not text:
+        return ""
+    # mdb-export commonly emits Access dates with a time component. Accept the
+    # formats Logbook Pro has used over the years and normalize to the same
+    # MM/DD/YYYY form as its CSV export.
+    for fmt in (
+        "%m/%d/%Y %H:%M:%S", "%m/%d/%y %H:%M:%S", "%m/%d/%Y", "%m/%d/%y",
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d",
+    ):
+        try:
+            return datetime.strptime(text, fmt).strftime("%m/%d/%Y")
+        except ValueError:
+            pass
+    # Some Access exports include fractional seconds / AM-PM. Try the date
+    # portion alone before giving up.
+    token = text.split()[0]
+    for fmt in ("%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(token, fmt).strftime("%m/%d/%Y")
+        except ValueError:
+            pass
+    return ""
+
+
+def _mdb_command(*args: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(args, text=True, capture_output=True, check=True, timeout=60)
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "Native .lbk import requires mdbtools. The Docker image includes it; "
+            "for local development use the CSV export or install mdbtools on the host."
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "mdbtools could not read the file").strip()
+        raise ValueError(f"Could not read Logbook Pro .lbk file: {detail}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("Timed out while reading Logbook Pro .lbk file") from exc
+
+
+def _mdb_tables(path: str) -> list[str]:
+    out = _mdb_command("mdb-tables", "-1", path).stdout
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def _mdb_export_rows(path: str, table: str) -> list[dict[str, str]]:
+    out = _mdb_command("mdb-export", path, table).stdout
+    if not out.strip():
+        return []
+    return [dict(row) for row in csv.DictReader(io.StringIO(out))]
+
+
+def _score_log_table(rows: list[dict[str, str]]) -> int:
+    if not rows:
+        return -1
+    cols = {_norm_col(c) for c in rows[0].keys()}
+    score = 0
+    groups = [
+        ("logdate", "date", "flightdate"),
+        ("duration", "totaltime", "flighttime"),
+        ("route", "routeofflight", "routefrom", "routeto"),
+        ("aircraft", "aircraftid", "actype", "aircrafttype"),
+        ("flightnumber", "flightno", "flightnum"),
+    ]
+    for group in groups:
+        if any(_norm_col(x) in cols for x in group):
+            score += 2
+    return score
+
+
+def _score_aircraft_table(rows: list[dict[str, str]]) -> int:
+    if not rows:
+        return -1
+    cols = {_norm_col(c) for c in rows[0].keys()}
+    score = 0
+    if any(x in cols for x in ("aircraftid", "id", "aircraftkey", "typeid")):
+        score += 2
+    if any(x in cols for x in ("aircraft", "type", "model", "makemodel", "aircrafttype", "name")):
+        score += 3
+    if "class" in cols:
+        score += 1
+    return score
+
+
+def _native_route(row: dict[str, str]) -> str:
+    direct = _row_get(row, "Route", "RouteOfFlight", "FullRoute")
+    if direct and direct.upper() not in {"APDL"}:
+        return direct
+    origin = _row_get(row, "RouteFrom", "From", "Origin", "Departure")
+    dest = _row_get(row, "RouteTo", "To", "Destination", "Arrival")
+    if re.fullmatch(r"[A-Za-z0-9]{3,4}", origin or "") and re.fullmatch(r"[A-Za-z0-9]{3,4}", dest or ""):
+        return f"{origin}-{dest}"
+    return direct or origin or dest
+
+
+def _lbk_to_rows(raw: bytes) -> tuple[list[dict[str, str]], dict]:
+    """Best-effort direct reader for Logbook Pro's native Access/JET .lbk file.
+
+    Logbook Pro .lbk files are Access databases. We intentionally use the small
+    mdbtools command-line reader rather than a write-capable database driver: the
+    tracker only needs to extract data and never modifies the user's .lbk file.
+    Table/column discovery is heuristic so it remains tolerant of Logbook Pro
+    versions with slightly different schemas.
+    """
+    with tempfile.NamedTemporaryFile(prefix="flightline-logbook-", suffix=".lbk", delete=False) as tmp:
+        tmp.write(raw)
+        path = tmp.name
+    try:
+        tables = _mdb_tables(path)
+        if not tables:
+            raise ValueError("No readable tables were found in the .lbk file")
+
+        table_rows: dict[str, list[dict[str, str]]] = {}
+        preferred_log = next((t for t in tables if t.lower() == "tbllog"), None)
+        if preferred_log:
+            table_rows[preferred_log] = _mdb_export_rows(path, preferred_log)
+        candidates = [preferred_log] if preferred_log else []
+        candidates += [t for t in tables if t not in candidates and ("log" in t.lower() or "flight" in t.lower())]
+        if not candidates:
+            candidates = tables[:]
+        log_table = None
+        log_rows: list[dict[str, str]] = []
+        best_score = -1
+        for table in candidates:
+            if table not in table_rows:
+                try:
+                    table_rows[table] = _mdb_export_rows(path, table)
+                except ValueError:
+                    continue
+            score = _score_log_table(table_rows[table])
+            if score > best_score:
+                best_score, log_table, log_rows = score, table, table_rows[table]
+        if not log_table or not log_rows or best_score < 4:
+            raise ValueError("Could not identify the Logbook Pro flight-entry table in this .lbk file")
+
+        aircraft_tables = [t for t in tables if "aircraft" in t.lower() or t.lower() in {"tblac", "actypes", "types"}]
+        aircraft_rows: list[dict[str, str]] = []
+        aircraft_table = None
+        best_aircraft_score = -1
+        for table in aircraft_tables:
+            try:
+                rows = table_rows.get(table) or _mdb_export_rows(path, table)
+            except ValueError:
+                continue
+            score = _score_aircraft_table(rows)
+            if score > best_aircraft_score:
+                best_aircraft_score, aircraft_table, aircraft_rows = score, table, rows
+
+        # Build lookup maps from plausible aircraft ID columns. The log table may
+        # already contain the model directly; the lookup is only a fallback.
+        aircraft_lookup: dict[str, dict[str, str]] = {}
+        for arow in aircraft_rows:
+            aid = _row_get(arow, "AircraftID", "ID", "AircraftKey", "TypeID", "ACID")
+            if aid:
+                aircraft_lookup[aid] = arow
+
+        rows: list[dict[str, str]] = []
+        skipped = 0
+        for native in log_rows:
+            date_text = _normalize_native_date(_row_get(native, "LogDate", "Date", "FlightDate"))
+            if not date_text:
+                skipped += 1
+                continue
+            aircraft_ref = _row_get(native, "AircraftID", "AircraftKey", "TypeID", "ACID")
+            lookup = aircraft_lookup.get(aircraft_ref, {})
+            model = _row_get(native, "AircraftMakeModel", "MakeModel", "AircraftType", "ACType", "Aircraft", "Model", "Type") \
+                or _row_get(lookup, "AircraftMakeModel", "MakeModel", "AircraftType", "ACType", "Aircraft", "Model", "Type", "Name")
+            ident = _row_get(native, "AircraftIdent", "Ident", "Registration", "Tail", "TailNumber", "NNumber") \
+                or _row_get(lookup, "AircraftIdent", "Ident", "Registration", "Tail", "TailNumber", "NNumber")
+            row = {key: "" for key in EXPECTED_COLUMNS}
+            row.update({
+                "DATE": date_text,
+                "AIRCRAFT MAKE & MODEL": model,
+                "AIRCRAFT IDENT": ident,
+                "FLIGHT #": _row_get(native, "FlightNumber", "FlightNo", "FlightNum", "Flight#"),
+                "ROUTE OF FLIGHT": _native_route(native),
+                "LEGS": _row_get(native, "Legs", "LegCount"),
+                "DURATION": _row_get(native, "Duration", "TotalTime", "FlightTime"),
+                "NIGHT": _row_get(native, "Night", "NightTime"),
+                "INSTRUMENT": _row_get(native, "Instrument", "ActualInstrument", "ActualInst"),
+                "APPROACHES & TYPE": _row_get(native, "Approaches", "Approach", "ApproachesType"),
+                "LANDINGS DAY": _row_get(native, "LandingsDay", "DayLandings", "DayLanding"),
+                "LANDINGS NIGHT": _row_get(native, "LandingsNight", "NightLandings", "NightLanding"),
+                "REMARKS": _row_get(native, "Remarks", "Comment", "Comments", "Notes"),
+                "SIMULATED INSTRUMENT": _row_get(native, "SimulatedInstrument", "SimInstrument", "Hood"),
+                "SIMULATOR": _row_get(native, "Simulator", "Sim"),
+                "CROSS COUNTRY": _row_get(native, "CrossCountry", "XC", "CrossCountryTime"),
+                "FE": _row_get(native, "FE", "FlightEngineer"),
+                "INSTRUCTOR": _row_get(native, "Instructor", "CFI"),
+                "SOLO": _row_get(native, "Solo"),
+                "DUAL": _row_get(native, "Dual", "DualReceived"),
+                "SECOND IN COMMAND": _row_get(native, "SecondInCommand", "SIC", "Copilot"),
+                "PILOT IN COMMAND": _row_get(native, "PilotInCommand", "PIC"),
+                "FLIGHT COST": _row_get(native, "FlightCost", "Cost"),
+                "EXPENSES": _row_get(native, "Expenses", "Expense"),
+            })
+            rows.append(row)
+        if not rows:
+            raise ValueError("The .lbk database was readable, but no flight rows could be converted")
+        return rows, {
+            "native_lbk": True,
+            "lbk_log_table": log_table,
+            "lbk_aircraft_table": aircraft_table,
+            "lbk_skipped_rows": skipped,
+            "repaired_rows": 0,
+            "skipped_rows": skipped,
+        }
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+
+def _rows_to_csv_bytes(rows: list[dict[str, str]]) -> bytes:
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=EXPECTED_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in EXPECTED_COLUMNS})
+    return buf.getvalue().encode("utf-8")
+
+
+def import_logbook_lbk(db: Session, raw: bytes) -> dict:
+    rows, native_diag = _lbk_to_rows(raw)
+    result = import_logbook_csv(db, _rows_to_csv_bytes(rows))
+    result.update({k: v for k, v in native_diag.items() if k not in {"repaired_rows", "skipped_rows"}})
+    result["source_format"] = "lbk"
+    return result
 
 
 def parse_logbook_csv(raw: bytes) -> tuple[list[dict[str, str]], dict]:
@@ -377,6 +628,7 @@ def import_logbook_csv(db: Session, raw: bytes) -> dict:
     dates = [_date(r["DATE"]) for r in non_sim_rows]
     return {
         "ok": True,
+        "source_format": "csv",
         "rows": len(rows),
         "inserted": inserted,
         "updated": updated,
@@ -492,23 +744,26 @@ def _entry_route_speed_check(entry: LogbookEntry, alias_map: dict[str, str], air
 def _route_time_estimate_uncached(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
     """Historical average flight time for a city-pair from the imported logbook.
 
-    Direction is respected first (winds matter).  If there are no same-direction
-    samples, the reverse direction is used as a fallback. Multi-leg Logbook Pro
-    entries are divided evenly because the export has one duration for the entry.
+    Direction is respected first because winds matter. Airport aliases are
+    expanded before the SQL query, so IATA/ICAO pairs such as SDF/KSDF and
+    ANC/PANC contribute to the same history instead of being missed.
     """
     origin = (origin or "").strip().upper()
     destination = (destination or "").strip().upper()
-    alias_map, _ = canonical_airport_groups(db, {origin, destination})
+    alias_map, meta = canonical_airport_groups(db, {origin, destination})
     ocanon = alias_map.get(origin, origin)
     dcanon = alias_map.get(destination, destination)
+    origin_aliases = {raw for raw, canonical in alias_map.items() if canonical == ocanon} | {origin, ocanon}
+    destination_aliases = {raw for raw, canonical in alias_map.items() if canonical == dcanon} | {destination, dcanon}
 
-    # Pull only entries that contain either endpoint pair, then canonicalize in
-    # Python so DFW/KDFW and similar aliases contribute to the same estimate.
     entries = (
         db.query(LogbookEntry)
         .options(selectinload(LogbookEntry.legs))
         .join(LogbookLeg)
-        .filter(LogbookLeg.origin.in_({origin, destination, ocanon, dcanon}) | LogbookLeg.destination.in_({origin, destination, ocanon, dcanon}))
+        .filter(
+            (LogbookLeg.origin.in_(origin_aliases | destination_aliases)) |
+            (LogbookLeg.destination.in_(origin_aliases | destination_aliases))
+        )
         .distinct()
         .all()
     )
@@ -517,18 +772,17 @@ def _route_time_estimate_uncached(db: Session, origin: str, destination: str, ai
     def samples(reverse: bool = False):
         values = []
         estimated = False
+        want_o, want_d = (dcanon, ocanon) if reverse else (ocanon, dcanon)
         for entry in entries:
-            if normalized_model and entry.aircraft_model and entry.aircraft_model != normalized_model:
+            if normalized_model and entry.aircraft_model and _tracker_model(entry.aircraft_model) != normalized_model:
                 continue
             legs = list(entry.legs)
             if not legs or not entry.duration_hours:
                 continue
             share = float(entry.duration_hours) / len(legs)
             for leg in legs:
-                lm, _ = canonical_airport_groups(db, {leg.origin, leg.destination, origin, destination})
-                lo = lm.get(leg.origin, leg.origin)
-                ld = lm.get(leg.destination, leg.destination)
-                want_o, want_d = (dcanon, ocanon) if reverse else (ocanon, dcanon)
+                lo = alias_map.get(leg.origin, leg.origin)
+                ld = alias_map.get(leg.destination, leg.destination)
                 if lo == want_o and ld == want_d:
                     values.append(share)
                     estimated |= len(legs) > 1
@@ -540,7 +794,6 @@ def _route_time_estimate_uncached(db: Session, origin: str, destination: str, ai
         vals, estimated = samples(True)
         basis = "reverse_direction"
     if not vals and normalized_model:
-        # If aircraft-specific history is unavailable, fall back to all types.
         return _route_time_estimate_uncached(db, origin, destination, None)
     if not vals:
         return {"average_hours": None, "samples": 0, "estimated": False, "basis": None}
@@ -553,7 +806,6 @@ def _route_time_estimate_uncached(db: Session, origin: str, destination: str, ai
     }
 
 
-
 def route_time_estimate(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
     key = ((origin or "").strip().upper(), (destination or "").strip().upper(), _tracker_model(aircraft_model) if aircraft_model else None)
     with _CACHE_LOCK:
@@ -564,6 +816,40 @@ def route_time_estimate(db: Session, origin: str, destination: str, aircraft_mod
     with _CACHE_LOCK:
         _ROUTE_TIME_CACHE[key] = result
     return result
+
+
+def route_reference_estimate(db: Session, origin: str, destination: str, aircraft_model: str | None = None) -> dict:
+    """Cheap local fallback when the logbook has no city-pair samples.
+
+    This is intentionally labeled an estimate rather than a historical typical
+    time. It uses great-circle distance and a conservative aircraft-family
+    cruise speed plus climb/descent/taxi allowance. No network/API call occurs.
+    """
+    alias_map, meta = canonical_airport_groups(db, {origin, destination})
+    o = alias_map.get((origin or "").strip().upper(), (origin or "").strip().upper())
+    d = alias_map.get((destination or "").strip().upper(), (destination or "").strip().upper())
+    a, b = meta.get(o), meta.get(d)
+    if not a or not b:
+        return {"hours": None, "distance_nm": None, "basis": None}
+    distance = _haversine_nm_coords((a["lat"], a["lon"]), (b["lat"], b["lon"]))
+    model = (_tracker_model(aircraft_model) or "").upper()
+    speed = 450.0
+    if any(token in model for token in ("B-748", "B-744", "B747")):
+        speed = 485.0
+    elif "MD-11" in model or "MD11" in model:
+        speed = 475.0
+    elif "767" in model:
+        speed = 460.0
+    elif "757" in model:
+        speed = 450.0
+    elif "727" in model:
+        speed = 430.0
+    elif distance < 500:
+        speed = 360.0
+    overhead = 0.45 if distance < 500 else 0.35 if distance < 1500 else 0.30
+    hours = max(0.35, distance / speed + overhead)
+    return {"hours": round(hours, 2), "distance_nm": round(distance), "basis": "distance_aircraft"}
+
 
 
 def _build_logbook_map_uncached(

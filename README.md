@@ -1,212 +1,154 @@
 # Flightline Tracker
 
-Self-hosted family flight tracker for UPS trips, live AeroAPI tracking, detailed flown-track history, and a lifetime Logbook Pro map.
+A self-hosted flight tracker and lifetime logbook map built for pilots and their families.
 
-## What is in the repository
+It can display a current trip on a world map, follow live flights through FlightAware AeroAPI, preserve the exact flown track after landing, replay completed flights, import Logbook Pro history, and automatically add completed operating flights to the lifetime map.
 
-```text
-.github/workflows/docker-publish.yml   Build/publish the production image to GHCR
-app/                                   FastAPI application and web UI
-Dockerfile                             Production container image
-requirements.txt                       Python dependencies
-docker-compose.yml                     Synology/Portainer production stack
-.env.example                           Example stack variables
-run-local.sh                           Isolated local Linux test launcher
-README.md                              This file
-```
+## Highlights
 
-Runtime data is **not** part of Git. Keep `/data` persistent. It contains the SQLite database, flight history, saved AeroAPI tracks, settings, logbook archive, admin-session secret, and backups.
+- Current / upcoming trip map with actual flown track
+- FlightAware live status, delay, aircraft and position data
+- Exact completed tracks saved locally for replay
+- Light / dark themes and English / French / Russian UI
+- Mobile-friendly layout and map-only mode
+- Awarded vs. current/rebuilt schedule views
+- Automatic rest detection for gaps of 10 hours or more
+- Lifetime logbook map with route frequency, airport statistics and aircraft filters
+- Logbook Pro `.csv` and native `.lbk` import
+- Three lightweight weather snapshots per tracked flight for replay context
+- Persistent SQLite data under `/data`
+- Admin-only editing without requiring visitors to log in
+- Docker / Portainer / GHCR / Watchtower friendly
 
-## Local development
+## Run locally
+
+Python 3.12+ is recommended.
 
 ```bash
 ./run-local.sh
 ```
 
-Then open `http://127.0.0.1:8080`.
+The script creates a project-local `.venv`; it does not install Python packages system-wide.
 
-The script creates `.venv` inside the repository and refuses to install packages unless it is using that isolated Python environment.
+Then open:
 
-## Production with Portainer / Synology
+```text
+http://127.0.0.1:8080
+```
 
-The production image is expected at:
+CSV logbook import works everywhere. Native `.lbk` import uses `mdbtools`; the Docker image already includes it. If you want `.lbk` import while running directly on Linux, install `mdbtools` through your operating system first.
+
+## Docker / Portainer
+
+The included `docker-compose.yml` expects a published image such as:
 
 ```text
 ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
 ```
 
-Create a Portainer stack from `docker-compose.yml` and set these variables:
+Copy `.env.example` to `.env` or define the same variables in Portainer:
 
 ```text
 TRACKER_IMAGE=ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
 TRACKER_PORT=8765
 TRACKER_DATA_PATH=/volume1/docker/flightline-tracker/data
-ADMIN_PASSWORD=choose-a-strong-password
+ADMIN_PASSWORD=choose-a-strong-admin-password
+ADMIN_COOKIE_SECURE=auto
+WEATHER_ARCHIVE_MAX_MB=100
 ```
 
-The application remains on port `8080` inside the container. `TRACKER_PORT` controls the NAS-side port. Point your HTTPS reverse proxy at `NAS-IP:TRACKER_PORT`.
-
-If the tracker is exposed to the internet, keep HTTPS enabled at the reverse proxy. Production Compose sets secure admin cookies.
-
-## GitHub / GHCR in plain English
-
-There are three different things:
-
-1. **GitHub repository** — stores the source code you edit and `git push`.
-2. **GitHub Actions** — a cloud build machine that reads the repository and builds the Docker image.
-3. **GHCR (GitHub Container Registry)** — stores the finished Docker image that the Synology actually runs.
-
-Think of it as:
-
-```text
-source code in GitHub
-        ↓
-GitHub Actions builds it
-        ↓
-GHCR stores the finished container
-        ↓
-Watchtower downloads that container to the NAS
-```
-
-The included `.github/workflows/docker-publish.yml` runs whenever `main` is updated. For a repository named `flightline-tracker`, it publishes:
-
-```text
-ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
-```
-
-It also publishes version tags such as `:v19.0` when you push a Git tag and an immutable commit-SHA tag for rollback/debugging.
-
-### First-time GHCR setup
-
-1. Copy this project into your cloned `flightline-tracker` repository.
-2. Commit and push to `main`.
-3. Open the GitHub repository → **Actions** and wait for **Build and publish tracker image** to finish successfully.
-4. GitHub will create a container package named `flightline-tracker` under your account's **Packages** section.
-5. In Portainer set:
-
-```text
-TRACKER_IMAGE=ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
-```
-
-6. Deploy the stack once manually. After that, Watchtower can monitor that exact image tag and replace the tracker whenever the `stable` image digest changes.
-
-The workflow publishes using GitHub's built-in `GITHUB_TOKEN`; you do not need to create a publishing password for GitHub Actions.
-
-GHCR packages are private by default. The easiest first deployment is to make the container package public. If you keep it private, the NAS/Watchtower must authenticate to `ghcr.io` with a GitHub token that can read packages.
-
-### Normal update workflow
+Then deploy:
 
 ```bash
-./run-local.sh                 # test
+docker compose up -d
+```
+
+The web app will be available on the host port you selected, for example:
+
+```text
+http://NAS-IP:8765
+```
+
+Use an HTTPS reverse proxy before exposing the tracker to the internet.
+
+## Persistent data
+
+Everything that should survive container updates lives under `/data`, including:
+
+- SQLite database
+- trip and flight history
+- saved AeroAPI tracks
+- imported logbook history
+- tracking settings
+- admin-session secrets
+- database backups
+- the small replay-weather archive
+
+Keep `/data` mounted to a persistent Synology folder when replacing or auto-updating the container.
+
+## GitHub → GHCR → Watchtower
+
+The repository includes `.github/workflows/docker-publish.yml`.
+
+A push to `main` works like this:
+
+```text
+git push
+   ↓
+GitHub Actions builds the Docker image
+   ↓
+GHCR publishes flightline-tracker:stable
+   ↓
+Watchtower sees a new image digest
+   ↓
+Synology container is replaced
+   ↓
+the same /data directory is mounted again
+```
+
+For a normal release:
+
+```bash
 git add -A
-git commit -m "Describe change"
+git commit -m "Describe the update"
 git push origin main
 ```
 
-After the push:
+If your GHCR package is public, Portainer and Watchtower can pull it without GitHub registry credentials.
 
-```text
-GitHub Actions → new :stable image → GHCR → Watchtower → NAS
-```
+## FlightAware usage
 
-Do not use `main` as a scratch branch once Watchtower is auto-deploying `:stable`. Use a development/feature branch for unfinished changes.
+The tracker is designed to reduce AeroAPI spending:
 
-### Optional release tag
+- no paid query merely because the page was opened
+- slower status polling when nobody is watching
+- live position polling only when useful
+- one final detailed track fetch after landing
+- historical replay uses the locally saved track and does not query AeroAPI again
 
-Once a version is known-good:
+The default local monthly guard is `$4.50` and can be changed in Admin → Tracking API.
 
-```bash
-git tag v19.0
-git push origin v19.0
-```
+## Weather replay
 
-That gives you a fixed `:v19.0` image that can be used for rollback even after `:stable` moves forward.
+Flightline Tracker stores at most **three** small RainViewer radar snapshots for a tracked flight:
 
-## Watchtower updates
+1. near the beginning
+2. around the middle
+3. near the end / landing
 
-The tracker container has:
+The archive has a default global cap of **100 MB**. Older v18/v19 hourly snapshots are automatically reduced to three representative frames per flight after upgrading to v20.
 
-```text
-com.centurylinklabs.watchtower.enable=true
-```
+Day/night replay is calculated from the saved timestamps and requires no stored imagery.
 
-If your existing Watchtower uses label-only mode, it can update the tracker automatically when GHCR publishes a new digest for `:stable`.
+## Logbook Pro
 
-For a **public GHCR package**, no registry login is needed. For a **private GHCR package**, Docker/Watchtower must have GHCR credentials. A common setup is to `docker login ghcr.io` with a token that has `read:packages`, then mount/share the resulting Docker `config.json` with Watchtower.
+History → Import logbook accepts:
 
-Your `/data` bind mount is not replaced when Watchtower recreates the application container.
+- Logbook Pro CSV exports
+- native `.lbk` Access/JET database files
 
-## Theme and maps
+SIM entries are ignored. Re-importing a newer complete logbook updates existing records instead of intentionally duplicating them. Airport aliases such as `DFW/KDFW` and `ANC/PANC` are collapsed to one physical airport on the map.
 
-The browser remembers the selected theme. **Light** keeps the classic translucent Flightline UI but now uses OpenFreeMap **Liberty**, which is the map palette preferred during testing. **Dark** uses the darker OpenFreeMap **Fiord** basemap: clearly darker than Liberty without returning to the nearly-black style that made the day/night terminator hard to see.
+## License / data providers
 
-Dark Reader is locked out because the application manages its own route colors and theme.
-
-On the lifetime logbook map, reciprocal connections (`A→B` and `B→A`) are combined into one `A ↔ B` connection. Rare routes are hairline-thin; frequently flown connections progressively become thicker and more opaque. Airport markers use a contrasting blue/cyan fill rather than white-on-white circles.
-
-Click a logbook connection to see:
-
-- times flown
-- total route time
-- average flight time
-- direction counts
-- aircraft-type breakdown
-- most-used registrations
-
-If a Logbook Pro record contains several legs but only one total duration, the per-leg average is explicitly marked as an estimate.
-
-
-## v16 map interaction and rest inference
-
-- Manual/rebuilt schedules automatically mark a **rest stop** when the gap from one scheduled arrival to the next scheduled departure is **10 hours or more**. The destination gets the existing star marker, and the schedule editor shows the calculated rest duration.
-- The lifetime logbook map uses wide invisible hit targets so very thin routes remain easy to click.
-- Clicking a route dims unrelated routes/airports and highlights only that connection and its endpoints. Clicking an airport highlights every connection associated with that location. Click empty map space to restore the full map.
-- Airport popups show visits, flights touching the airport, arrivals/departures, logged hours, first/last visit, aircraft breakdown, registrations, and most-used connections.
-- Aircraft filtering supports selecting **multiple types at once**.
-- A **Map only** control hides the UI overlays on both current-trip and lifetime-logbook maps.
-
-### Historical weather
-
-Replay weather is deliberately storage-limited. For recent flights, replay can use RainViewer's short public historical window directly. For future tracked flights, v19 saves at most one low-resolution radar tile per hour **and only while at least one live viewer is present**. By default it keeps no more than 24 snapshots per flight and caps the entire `/data/weather/` archive at 250 MB, pruning the oldest radar images first. Saved AeroAPI tracks are never removed by this weather cap.
-
-The defaults can be changed with `WEATHER_ARCHIVE_INTERVAL_MINUTES`, `WEATHER_ARCHIVE_MAX_PER_FLIGHT`, and `WEATHER_ARCHIVE_MAX_MB`. Day/night geometry is reconstructed mathematically from saved track timestamps and requires no stored imagery.
-
-## Admin cookie / reverse-proxy behavior
-
-`ADMIN_COOKIE_SECURE` defaults to `auto`. In automatic mode Flightline Tracker issues a Secure admin cookie when the browser is using HTTPS (including through a reverse proxy that sends `X-Forwarded-Proto: https`) and a normal HttpOnly cookie when testing directly over `http://NAS-IP:port`. You can still force `true` or `false`, but normally leave it at `auto`.
-
-If upgrading from an older stack that explicitly sets `ADMIN_COOKIE_SECURE: "true"`, either remove that line or change it to `auto`; otherwise direct HTTP testing will repeatedly ask for the admin password because browsers correctly refuse to send a Secure cookie over HTTP.
-
-
-## v17 live-status and replay refinements
-
-- Flight numbers on the current map link to FlightAware, with a nearby Flightradar24 link. UPS ICAO identifiers such as `UPS2998` are translated to the FR24/IATA form `5X2998` for that link.
-- The live card now keeps FlightAware runway scheduled OFF/ON times and provider delay values separate from the UPS/PDF schedule. Before a flight it shows the last landing and next takeoff; airborne it shows actual takeoff and expected landing; after landing it shows the landing and next takeoff.
-- Completed deadheads remain dashed instead of becoming solid grey routes.
-- Leg-number markers are clickable and show route, timing, aircraft/registration, external tracking links, and saved-track replay when available.
-- Saved AeroAPI tracks can be replayed entirely in the browser with no new AeroAPI calls; the historical day/night terminator follows the saved track timestamps.
-- Map palette: Liberty is now the normal/light basemap; Fiord is the darker basemap.
-- The B747-specific aircraft-filter shortcut was removed; multi-select remains available for any combination of aircraft types.
-
-
-## v18 airport/history cleanup
-
-- Logbook airport identities are canonicalized by physical location. IATA/ICAO duplicates such as `DFW`/`KDFW` and `ANC`/`PANC` collapse to one map node while the popup retains the aliases.
-- Old logbook routes that resolve to geography requiring more than 900 kt average groundspeed are treated as suspicious code/source collisions. They remain in lifetime totals but are hidden from the geographic map; the original Logbook Pro text is never rewritten.
-- Airport codes shown throughout the current map, schedule editor, history, logbook route popups, and top-route summaries include city/location names where available.
-- The ground status now says **On ground at …** rather than “Last scheduled stop.”
-- The old elapsed rest timer is now a live **Next flight in** countdown to the next planned/provider-adjusted takeoff.
-- Current-leg popups show scheduled duration plus a typical historical flight time derived from the imported logbook when samples exist.
-- Replay uses saved radar snapshots when available and falls back to RainViewer's recent public archive when the replay timestamp is still inside that window.
-
-
-## v19 NAS performance pass
-
-- Opening the live map no longer triggers an immediate paid AeroAPI refresh. Viewer heartbeats only switch the normal background worker between the configured live-view interval and the slower no-viewer interval. Use **Sync now** in Admin mode when an immediate provider refresh is genuinely needed.
-- Dashboard historical route-time lookups are cached in memory and cleared only when the lifetime logbook changes.
-- Lifetime-logbook map results and filter/options data are cached server-side. Reopening the same view does not rebuild thousands of derived counters from SQLite.
-- Large JSON responses are gzip-compressed at a low CPU level.
-- The lifetime map uses Leaflet Canvas rather than thousands of SVG DOM nodes, uses three world copies rather than five, and uses fewer great-circle segments. Wide invisible click targets are preserved.
-- Replay-weather storage defaults to one snapshot/hour, 24 per flight, 250 MB total, and only archives while the live map has a viewer.
-
-These changes are aimed specifically at lower-power Synology hardware.
+Map tiles/styles: OpenFreeMap. Weather radar: RainViewer. Live tracking can use FlightAware AeroAPI when configured by the administrator.

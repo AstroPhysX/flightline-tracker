@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Airport, Flight, Trip
 from .flight_timing import timing_summary
-from .logbook_service import route_time_estimate
+from .logbook_service import route_time_estimate, route_reference_estimate
 
 REST_RELEASE_BUFFER_MINUTES = 45
 
@@ -83,7 +83,7 @@ def _awarded_rows(trip: Trip):
     return sorted(rows, key=lambda f: (f.awarded_sequence or 9999, f.awarded_flight_date or f.flight_date, f.id))
 
 
-def build_dashboard(db: Session, trip_id: int | None = None, view: str = "current", public_delay_minutes: int = 0):
+def build_dashboard(db: Session, trip_id: int | None = None, view: str = "current", public_delay_minutes: int = 0, local_clock_name: str = "Jerome"):
     now = datetime.now(timezone.utc)
     trip = select_trip(db, trip_id)
     view = "awarded" if view == "awarded" else "current"
@@ -175,6 +175,9 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
         typical = route_time_estimate(
             db, origin_code, destination_code, aircraft_type if view == "current" else None
         ) if origin and destination else {"average_hours": None, "samples": 0, "estimated": False, "basis": None}
+        reference = route_reference_estimate(
+            db, origin_code, destination_code, aircraft_type if view == "current" else None
+        ) if origin and destination and typical.get("average_hours") is None else {"hours": None, "distance_nm": None, "basis": None}
 
         flights.append({
             "id": f.id,
@@ -202,6 +205,9 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
             "historical_samples": typical.get("samples", 0),
             "historical_duration_estimated": bool(typical.get("estimated")),
             "historical_basis": typical.get("basis"),
+            "route_estimated_hours": reference.get("hours"),
+            "route_estimated_distance_nm": reference.get("distance_nm"),
+            "route_estimate_basis": reference.get("basis"),
             "aircraft_type": aircraft_type,
             "registration": registration,
             "latitude": latitude,
@@ -294,6 +300,7 @@ def build_dashboard(db: Session, trip_id: int | None = None, view: str = "curren
             "last_completed_flight_id": last_completed["id"] if last_completed else None,
             "next_flight_id": next_flight["id"] if next_flight else None,
             "position_delay_minutes": int(public_delay_minutes),
+            "local_clock_name": (local_clock_name or "Jerome").strip() or "Jerome",
         },
         "diagnostics": {"missing_airports": sorted(missing_airports)},
         "view": view,
