@@ -33,7 +33,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.2.0")
+app = FastAPI(title="Flightline Tracker", version="2.3.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
@@ -70,7 +70,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.2.0"}
+    return {"ok": True, "version": "2.3.0"}
 
 
 @app.get("/", response_class=HTMLResponse)

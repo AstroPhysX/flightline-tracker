@@ -1,5 +1,7 @@
 # Flightline Tracker
 
+**v23** uses the approved transparent top-down tri-jet aircraft artwork as the browser/PWA icon.
+
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
 Flightline Tracker shows the current trip on a world map, follows live flights with FlightAware AeroAPI, saves the exact flown track after landing, replays completed flights, and imports Logbook Pro history.
