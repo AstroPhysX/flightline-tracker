@@ -5,5 +5,7 @@
   "display": "standalone",
   "background_color": "#0a0d12",
   "theme_color": "#11151b",
-  "icons": []
+  "icons": [
+    {"src": "/static/md11-favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}
+  ]
 }

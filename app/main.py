@@ -17,12 +17,12 @@ from .config import settings
 from .db import Base, engine, get_db
 from .migrations import ensure_schema_extensions
 from .models import Airport, Flight, Trip, LogbookEntry
-from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdate, FlightScheduleUpdate, ScheduleRemoveRequest, ViewerHeartbeat, AdminLoginRequest
+from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdate, FlightScheduleUpdate, ScheduleRemoveRequest, ViewerHeartbeat, AdminLoginRequest, BrowserScheduleSync
 from .services.aeroapi import AeroApiError, test_connection as test_aeroapi_connection
 from .services.airport_resolver import ensure_airport
 from .services.dashboard import build_dashboard, select_trip
 from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking
-from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive
+from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive, schedule_sync
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
 from .services.ups_pdf_import import import_awarded_line_pdfs
@@ -33,7 +33,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.0.0")
+app = FastAPI(title="Flightline Tracker", version="2.2.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
@@ -70,7 +70,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.0.0"}
+    return {"ok": True, "version": "2.2.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -169,11 +169,38 @@ def dashboard(request: Request, trip_id: int | None = None, view: str = "current
 
 @app.post("/api/viewers/heartbeat")
 def viewer_heartbeat(req: ViewerHeartbeat):
-    # Heartbeats only control the normal viewer-aware polling cadence. Opening
-    # a browser must never force an extra paid AeroAPI query. The background
-    # worker will pick the viewer up on its next normal cycle.
+    # A transition from zero viewers to one viewer asks for one fresh provider
+    # update. tracking_worker.kick_for_viewer() has its own 10-minute cooldown,
+    # so reloads/tabs cannot create a burst of paid API requests. While viewers
+    # remain present, the normal configured polling cadence takes over.
+    before = viewer_presence.count_active()
     active = viewer_presence.heartbeat(req.viewer_id)
-    return {"ok": True, "active_viewers": active, "refresh_triggered": False}
+    triggered = tracking_worker.kick_for_viewer() if before == 0 and active > 0 else False
+    return {"ok": True, "active_viewers": active, "refresh_triggered": triggered}
+
+
+@app.post("/api/integrations/ups-schedule")
+def receive_ups_schedule_sync(
+    req: BrowserScheduleSync,
+    request: Request,
+    _sync: None = Depends(schedule_sync.require_sync_token),
+):
+    # Browser-extension foundation only: stage a normalized snapshot for later
+    # compare/preview. Never auto-apply an external DOM parse to the live trip.
+    return schedule_sync.store(req.model_dump(mode="json"))
+
+
+@app.get("/api/integrations/ups-schedule/status")
+def ups_schedule_sync_status(_admin: None = Depends(admin_auth.require_admin)):
+    return schedule_sync.status()
+
+
+@app.get("/api/integrations/ups-schedule/latest")
+def ups_schedule_sync_latest(_admin: None = Depends(admin_auth.require_admin)):
+    latest = schedule_sync.latest()
+    if latest is None:
+        raise HTTPException(404, "No browser schedule snapshot has been received yet")
+    return latest
 
 
 @app.get("/api/settings/tracking/usage")

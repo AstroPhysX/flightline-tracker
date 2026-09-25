@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     dallas_timezone: str = "America/Chicago"
     admin_session_minutes: int = 30
     admin_cookie_secure: str = "auto"
+    # Separate bearer token reserved for the future UPS schedule browser extension.
+    # Leave blank to keep the integration endpoint disabled.
+    schedule_sync_token: str = ""
 
     @property
     def database_url(self) -> str:

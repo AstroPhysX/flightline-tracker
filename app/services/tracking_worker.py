@@ -16,6 +16,9 @@ from .weather_archive import archive_for_flight
 _STOP = threading.Event()
 _THREAD: threading.Thread | None = None
 _RUN_LOCK = threading.Lock()
+_VIEWER_KICK_LOCK = threading.Lock()
+_LAST_VIEWER_KICK_UTC: datetime | None = None
+VIEWER_KICK_COOLDOWN = timedelta(minutes=10)
 
 
 def _utc(value):
@@ -62,7 +65,7 @@ def _due_candidates(db: Session, now: datetime, poll_seconds: int, *, force: boo
     return eligible[:1]
 
 
-def _run_once_unlocked(*, force: bool = False) -> dict:
+def _run_once_unlocked(*, force: bool = False, force_live_position: bool = False) -> dict:
     cfg = tracker_settings.load()
     provider = str(cfg.get("provider") or "disabled")
     if provider != "aeroapi":
@@ -85,7 +88,7 @@ def _run_once_unlocked(*, force: bool = False) -> dict:
         results = []
         for flight in candidates:
             try:
-                result = sync_flight(key, db, flight, budget, live_viewers=active_viewers > 0)
+                result = sync_flight(key, db, flight, budget, live_viewers=active_viewers > 0, force_live_position=force_live_position)
                 # Completed operating flights automatically become part of the
                 # lifetime logbook map. Later Logbook Pro imports supersede the
                 # automatic copy rather than duplicating it.
@@ -114,20 +117,54 @@ def _run_once_unlocked(*, force: bool = False) -> dict:
         db.close()
 
 
-def run_once(*, force: bool = False) -> dict:
+def run_once(*, force: bool = False, force_live_position: bool = False) -> dict:
     # Serialize background/manual syncs so duplicate paid API calls cannot run
     # at the same time.
     if not _RUN_LOCK.acquire(blocking=False):
         return {"provider": "busy", "polled": 0, "skipped": "tracking sync already running"}
     try:
-        return _run_once_unlocked(force=force)
+        return _run_once_unlocked(force=force, force_live_position=force_live_position)
     finally:
         _RUN_LOCK.release()
 
 
 def kick_for_viewer() -> bool:
-    """Compatibility no-op. Viewer arrival no longer forces a paid API sync."""
-    return False
+    """Request one fresh provider sync when viewers return.
+
+    This is intentionally edge-triggered by the heartbeat endpoint and guarded
+    by a global 10-minute cooldown. A browser refresh therefore cannot create a
+    burst of paid calls. Once a viewer remains present, the normal configured
+    polling cadence (10 minutes by default) takes over.
+    """
+    global _LAST_VIEWER_KICK_UTC
+    now = datetime.now(timezone.utc)
+    with _VIEWER_KICK_LOCK:
+        if _LAST_VIEWER_KICK_UTC and now - _LAST_VIEWER_KICK_UTC < VIEWER_KICK_COOLDOWN:
+            return False
+
+        # Also respect the real provider-poll timestamp. If the worker already
+        # refreshed the current/next flight less than 10 minutes ago, a page
+        # open or refresh should reuse that fresh data instead of paying again.
+        db = SessionLocal()
+        try:
+            if not _due_candidates(db, now, int(VIEWER_KICK_COOLDOWN.total_seconds()), force=False):
+                return False
+        finally:
+            db.close()
+
+        _LAST_VIEWER_KICK_UTC = now
+
+    def _kick() -> None:
+        try:
+            # Force one current status lookup. If airborne, also force the
+            # dedicated current-position resource so the newly opened map gets
+            # the freshest available aircraft position.
+            run_once(force=True, force_live_position=True)
+        except Exception:
+            pass
+
+    threading.Thread(target=_kick, name="viewer-tracking-kick", daemon=True).start()
+    return True
 
 
 def _loop() -> None:

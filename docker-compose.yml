@@ -11,6 +11,7 @@ services:
       ADMIN_SESSION_MINUTES: "30"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       WEATHER_ARCHIVE_MAX_MB: "${WEATHER_ARCHIVE_MAX_MB:-100}"
+      SCHEDULE_SYNC_TOKEN: "${SCHEDULE_SYNC_TOKEN:-}"
     volumes:
       - ${TRACKER_DATA_PATH:-/volume1/docker/flightline-tracker/data}:/data
     labels:

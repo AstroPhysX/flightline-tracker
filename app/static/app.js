@@ -122,8 +122,9 @@ let nightLayers = [];
 let dashboard = null;
 let didInitialFit = false;
 let currentMapView = new URLSearchParams(location.search).get('view') === 'awarded' ? 'awarded' : 'current';
+const WEATHER_PREF_KEY='flightlineWeatherEnabled';
 let weatherLayer = null;
-let weatherEnabled = false;
+let weatherEnabled = localStorage.getItem(WEATHER_PREF_KEY) !== 'false';
 let weatherFrameGenerated = null;
 let replayWeatherLayer = null;
 let replayWeatherSnapshots = [];
@@ -341,13 +342,14 @@ function flightAwareUrl(f) {
 }
 
 function fr24FlightIdent(f) {
-  const ident=String(f?.flight_number||'').toUpperCase().replace(/\s+/g,'');
-  const ups=ident.match(/^UPS(\d+)$/);
-  return ups ? `5X${ups[1]}` : ident;
+  // Use the live callsign/flight-number route, not FR24's historical data page.
+  // For a live UPS leg this opens /UPS2998 and FR24 resolves it to the
+  // occurrence-specific URL (for example /UPS2998/<fr24_id>).
+  return String(f?.flight_number||'').toUpperCase().replace(/\s+/g,'');
 }
 
 function flightradar24Url(f) {
-  return `https://www.flightradar24.com/data/flights/${encodeURIComponent(fr24FlightIdent(f).toLowerCase())}`;
+  return `https://www.flightradar24.com/${encodeURIComponent(fr24FlightIdent(f))}`;
 }
 
 function flightExternalLinksHtml(f, label=null) {
@@ -475,12 +477,14 @@ function drawDashboard(data) {
     const b=[f.destination_airport.lat,f.destination_airport.lon];
     const tooltip=`${t('leg')} ${f.sequence} · ${f.flight_number} · ${flightRouteText(f)}${f.deadhead ? ' · '+t('deadhead') : ''}`;
     const track=(f.track || []).map(p=>[p.lat,p.lon]);
-    let indicatorPath=[];
-
-    // Keep the leg number/arrow anchored to the planned city-pair path even
-    // while the actual current track is still sparse. This prevents the marker
-    // from disappearing as a leg switches into Current state.
-    indicatorPath=greatCirclePoints(a,b);
+    const plannedPath=greatCirclePoints(a,b);
+    // Future legs use the planned path. Once a leg has a real flown track, its
+    // number and direction arrow move onto that actual path as well. This keeps
+    // the indicator aligned with what was/currently is being flown rather than
+    // the theoretical great-circle route.
+    let indicatorPath=((f.status==='current' || f.status==='completed' || f.status==='past') && track.length>=2)
+      ? track
+      : plannedPath;
     if (f.status==='current' && track.length>=2) {
       addRepeatedPolyline(track,routeStyle(f),tooltip);
       const last=track[track.length-1];
@@ -558,15 +562,28 @@ function setMetricLabels(primaryKey, secondaryKey) {
   if(b) b.textContent=t(secondaryKey);
 }
 
-function nextFlightDescriptionHtml(next) {
+function nextFlightDescriptionHtml(next, previousFlight=null) {
   if (!next) return '';
   const when=fmtDallas(bestDepartureIso(next,{actual:false}));
-  const token='__FLIGHT_LINK__';
   const reference=next.historical_average_hours!=null
-    ? ` · ${t('typical_short',{time:formatHoursDuration(next.historical_average_hours)})}`
-    : next.route_estimated_hours!=null ? ` · ${t('estimated_short',{time:formatHoursDuration(next.route_estimated_hours)})}` : '';
-  const raw=t('next_flight_status',{when,flight:token,route:flightRouteText(next)})+reference;
-  return escapeHtml(raw).replace(token,flightExternalLinksHtml(next));
+    ? ` · ${escapeHtml(t('typical_short',{time:formatHoursDuration(next.historical_average_hours)}))}`
+    : next.route_estimated_hours!=null ? ` · ${escapeHtml(t('estimated_short',{time:formatHoursDuration(next.route_estimated_hours)}))}` : '';
+
+  let gapHtml='';
+  if(previousFlight){
+    const endIso=bestArrivalIso(previousFlight,{actual:previousFlight.status!=='current'});
+    const nextIso=bestDepartureIso(next,{actual:false});
+    if(endIso && nextIso){
+      const minutes=Math.round((new Date(nextIso)-new Date(endIso))/60000);
+      if(Number.isFinite(minutes) && minutes>=0){
+        gapHtml=`<div class="status-next-gap">${escapeHtml(t('expected_between_flights',{time:formatMinutesDuration(minutes)}))}</div>`;
+      }
+    }
+  }
+
+  return `<div class="status-next-heading">${escapeHtml(t('next_flight_heading'))}</div>`+
+    `<div class="status-next-main">${escapeHtml(when)} · ${flightExternalLinksHtml(next)} · ${escapeHtml(flightRouteText(next))}${reference}</div>`+
+    gapHtml;
 }
 
 function statusMainFlightHtml(f) {
@@ -596,7 +613,7 @@ function updateStatusText() {
     const telemetry=[current.registration,current.aircraft_type,current.altitude_ft?`FL${Math.round(current.altitude_ft/100)}`:null,current.groundspeed_kt?`${current.groundspeed_kt} kt`:null,current.last_position_utc?`${t('position')} ${new Date(current.last_position_utc).toLocaleTimeString(currentLocale(),{hour12:false})}`:null].filter(Boolean).map(escapeHtml);
     const publicDelay=Number(dashboard?.status?.position_delay_minutes || 0);
     const delayNote=publicDelay>0?`<span class="status-note">${escapeHtml(t('public_position_delayed',{minutes:publicDelay}))}</span>`:'';
-    const nextDescription=nextFlightDescriptionHtml(next);
+    const nextDescription=nextFlightDescriptionHtml(next,current);
     detailHtml=`<div class="status-telemetry">${telemetry.map(x=>`<span>${x}</span>`).join('')}</div>${delayNote}${nextDescription?`<div class="status-next-flight">${nextDescription}</div>`:''}`;
     delayFocus=current;
     primaryIso=bestDepartureIso(current);
@@ -605,14 +622,14 @@ function updateStatusText() {
   } else if (last && next) {
     const resting=(last.status==='completed' && dashboard?.status?.is_resting);
     mainHtml=escapeHtml(resting ? t('resting_at',{place:flightAirportDisplay(last,'destination')}) : t('on_ground_at',{place:flightAirportDisplay(last,'destination')}));
-    detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?` · ${escapeHtml(t('deadhead'))}`:'');
+    detailHtml=nextFlightDescriptionHtml(next,last)+(next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'');
     delayFocus=next;
     primaryIso=bestArrivalIso(last);
     secondaryIso=bestDepartureIso(next,{actual:false});
     setMetricLabels('last_landing_dallas','next_takeoff_dallas');
   } else if (next) {
     mainHtml=escapeHtml(flightRouteText(next));
-    detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?` · ${escapeHtml(t('deadhead'))}`:'');
+    detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'');
     delayFocus=next;
     primaryIso=bestDepartureIso(next,{actual:false});
     secondaryIso=bestArrivalIso(next,{actual:false});
@@ -791,7 +808,7 @@ function stopFlightReplay(hide=true){
   replayFlight=null; replayIndex=0;
   if(hide) document.getElementById('replay-panel')?.classList.add('hidden');
   drawNightOverlay(new Date());
-  if(replayRestoreLiveWeather && weatherEnabled) setWeatherEnabled(true);
+  if(replayRestoreLiveWeather && weatherEnabled) setWeatherEnabled(true,{persist:false});
   replayRestoreLiveWeather=false;
 }
 
@@ -813,9 +830,10 @@ async function refresh() {
 }
 
 
-async function setWeatherEnabled(enabled) {
+async function setWeatherEnabled(enabled, {persist=true}={}) {
   const btn=document.getElementById('weather-toggle');
   weatherEnabled=Boolean(enabled);
+  if(persist) localStorage.setItem(WEATHER_PREF_KEY, weatherEnabled ? 'true' : 'false');
   btn.classList.toggle('active',weatherEnabled);
   btn.title=weatherEnabled?t('weather_on'):t('weather_off');
   btn.setAttribute('aria-label',btn.title);
@@ -1244,6 +1262,7 @@ if ('serviceWorker' in navigator) {
 }
 
 sendViewerHeartbeat();
+setWeatherEnabled(weatherEnabled,{persist:false});
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')sendViewerHeartbeat();});
 setInterval(sendViewerHeartbeat,30000);
 
@@ -1252,5 +1271,5 @@ refresh();
 setInterval(refresh,120000);
 setInterval(updateClocks,1000);
 setInterval(()=>drawNightOverlay(new Date()),60000);
-setInterval(()=>{if(weatherEnabled)setWeatherEnabled(true);},300000);
+setInterval(()=>{if(weatherEnabled)setWeatherEnabled(true,{persist:false});},300000);
 updateClocks();

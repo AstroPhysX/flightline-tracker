@@ -54,3 +54,35 @@ class ViewerHeartbeat(BaseModel):
 class AdminLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
     remember: bool = True
+
+
+class BrowserScheduleFlight(BaseModel):
+    external_id: str | None = Field(default=None, max_length=160)
+    kind: str = Field(default="flight", max_length=32)
+    flight_number: str | None = Field(default=None, max_length=32)
+    flight_date: date | None = None
+    origin: str | None = Field(default=None, max_length=8)
+    destination: str | None = Field(default=None, max_length=8)
+    deadhead: bool = False
+    scheduled_departure_utc: datetime | None = None
+    scheduled_arrival_utc: datetime | None = None
+    schedule_code: str | None = Field(default=None, max_length=32)
+
+
+class BrowserScheduleTrip(BaseModel):
+    external_id: str | None = Field(default=None, max_length=160)
+    name: str | None = Field(default=None, max_length=160)
+    start_date: date | None = None
+    end_date: date | None = None
+    flights: list[BrowserScheduleFlight] = Field(default_factory=list, max_length=200)
+
+
+class BrowserScheduleSync(BaseModel):
+    schema_version: int = Field(default=1, ge=1, le=20)
+    source: str = Field(default="ups-edge-extension", max_length=80)
+    extension_version: str | None = Field(default=None, max_length=40)
+    captured_at: datetime
+    page_url: str | None = Field(default=None, max_length=1000)
+    bid_period: str | None = Field(default=None, max_length=40)
+    line_number: int | None = None
+    trips: list[BrowserScheduleTrip] = Field(default_factory=list, max_length=100)

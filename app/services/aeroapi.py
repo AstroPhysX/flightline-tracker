@@ -432,6 +432,7 @@ def sync_flight(
     monthly_budget_usd: float,
     *,
     live_viewers: bool = True,
+    force_live_position: bool = False,
 ) -> dict:
     info = lookup_flight_info(api_key, flight, monthly_budget_usd)
     now = datetime.now(timezone.utc)
@@ -462,7 +463,7 @@ def sync_flight(
         # twice for essentially the same position on every poll.
         last_pos = _as_utc(flight.last_position_utc)
         stale_position = last_pos is None or (now - last_pos) > timedelta(minutes=12)
-        if (not info_had_position) or stale_position:
+        if force_live_position or (not info_had_position) or stale_position:
             try:
                 fetch_current_position(api_key, db, flight, monthly_budget_usd)
             except AeroApiError as exc:
