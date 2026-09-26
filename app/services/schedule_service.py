@@ -4,7 +4,7 @@ from datetime import datetime, time, timezone
 
 from sqlalchemy.orm import Session
 
-from ..models import Flight, Trip
+from ..models import Flight, Trip, LogbookEntry
 
 
 def _utc(dt: datetime | None) -> datetime | None:
@@ -54,7 +54,9 @@ def trip_flights(db: Session, trip: Trip) -> list[Flight]:
 
 def resequence_trip(db: Session, trip: Trip) -> None:
     rows = trip_flights(db, trip)
-    active = [f for f in rows if f.schedule_active or f.actual_departure_utc or f.actual_arrival_utc]
+    # v24 invariant: the user-controlled current schedule is defined only by
+    # schedule_active. Provider data must never resurrect a removed leg.
+    active = [f for f in rows if f.schedule_active]
     active.sort(key=chronology_key)
     for seq, flight in enumerate(active, start=1):
         flight.sequence = seq
@@ -92,6 +94,83 @@ def clear_provider_tracking(flight: Flight) -> None:
     flight.provider_track_fetched = False
 
 
+def discard_tracking_data(db: Session, flight: Flight) -> None:
+    """Discard provider/actual data for a leg the user removed from their trip.
+
+    FlightAware reports whether the public flight operated; that is not proof the
+    tracker owner actually travelled on it. In v24 ``schedule_active`` is the
+    authoritative membership flag. Removing a leg therefore removes any provider
+    observations that were attached to that schedule row, including the locally
+    saved track and any auto-generated lifetime-logbook copy.
+    """
+    clear_provider_tracking(flight)
+    flight.actual_departure_utc = None
+    flight.actual_arrival_utc = None
+    flight.status = "scheduled"
+    flight.aircraft_type = None
+    flight.registration = None
+    flight.positions.clear()
+    auto = (
+        db.query(LogbookEntry)
+        .filter(LogbookEntry.source_key == f"tracker:{flight.id}")
+        .one_or_none()
+    )
+    if auto is not None:
+        db.delete(auto)
+
+
+def repair_legacy_schedule_state(db: Session) -> list[int]:
+    """Normalize schedule state created by pre-v24 releases.
+
+    Returns flight IDs whose optional weather archive should be deleted.
+
+    Older releases could (1) seed an awarded baseline onto manually-created
+    trips and (2) continue tracking a row after it had been removed because
+    actual/provider timestamps were treated as schedule membership. Both
+    behaviors are repaired here, once per startup and idempotently.
+    """
+    weather_cleanup: list[int] = []
+    trips = db.query(Trip).all()
+    for trip in trips:
+        rows = trip_flights(db, trip)
+
+        if trip.source == "manual":
+            # Manual trips have no immutable PDF award. Some old migrations
+            # accidentally populated awarded_* fields on them.
+            for f in rows:
+                f.awarded_sequence = None
+                f.awarded_flight_number = None
+                f.awarded_flight_date = None
+                f.awarded_origin = None
+                f.awarded_destination = None
+                f.awarded_deadhead = None
+                f.awarded_scheduled_departure_utc = None
+                f.awarded_scheduled_arrival_utc = None
+
+        for f in list(rows):
+            if f.schedule_active:
+                continue
+
+            if (
+                f.actual_departure_utc
+                or f.actual_arrival_utc
+                or f.provider_flight_id
+                or f.positions
+            ):
+                discard_tracking_data(db, f)
+                weather_cleanup.append(f.id)
+
+            # Removed manual/replacement rows should not survive as tombstones.
+            if trip.source == "manual" or (f.schedule_added and not f.awarded_flight_number):
+                db.delete(f)
+
+        db.flush()
+        resequence_trip(db, trip)
+
+    db.commit()
+    return weather_cleanup
+
+
 def snapshot_awarded(flight: Flight) -> None:
     """Capture the immutable PDF award once. Manual trips never acquire an awarded baseline."""
     if getattr(flight, "trip", None) is not None and flight.trip.source != "ups_pdf":
@@ -113,28 +192,41 @@ def mark_added_after_award(flight: Flight) -> None:
     flight.schedule_active = True
 
 
-def deactivate_from(db: Session, trip: Trip, flight: Flight, include_selected: bool = True) -> int:
-    """Remove the selected unflown leg and later unflown legs from the current schedule.
+def deactivate_from(db: Session, trip: Trip, flight: Flight, include_selected: bool = True) -> tuple[int, list[int]]:
+    """Remove the selected leg and later legs from the user's current schedule.
 
-    Awarded rows are retained internally (inactive) so the immutable awarded view can
-    still be restored. Purely manual/replacement rows are physically deleted so the
-    schedule editor never accumulates tombstones.
+    Provider data never makes a row undeletable. If a selected/later leg has
+    FlightAware observations, those observations are discarded because the user
+    is explicitly saying that leg is not part of their trip. PDF-awarded rows
+    remain only as an inactive awarded baseline; manual and replacement rows are
+    physically deleted.
     """
     cutoff = chronology_key(flight)
     count = 0
+    weather_cleanup: list[int] = []
     for f in list(trip_flights(db, trip)):
         if not f.schedule_active:
             continue
         key = chronology_key(f)
         if key > cutoff or (include_selected and f.id == flight.id):
-            if f.actual_departure_utc or f.actual_arrival_utc:
-                continue
-            if (f.schedule_added or trip.source == "manual") and not f.awarded_flight_number:
+            if (
+                f.actual_departure_utc
+                or f.actual_arrival_utc
+                or f.provider_flight_id
+                or f.positions
+            ):
+                discard_tracking_data(db, f)
+                weather_cleanup.append(f.id)
+
+            if trip.source == "manual" or (f.schedule_added and not f.awarded_flight_number):
                 db.delete(f)
             else:
                 f.schedule_active = False
-                f.schedule_change_note = "Removed during schedule rebuild"
+                f.sequence = 0
+                f.schedule_change_note = "Removed from current schedule"
             count += 1
+
     db.flush()
     resequence_trip(db, trip)
-    return count
+    return count, weather_cleanup
+

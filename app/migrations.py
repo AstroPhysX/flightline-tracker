@@ -42,8 +42,10 @@ def ensure_schema_extensions(engine) -> None:
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
         # Existing v5 databases predate awarded/current schedule separation.
-        # Seed a baseline snapshot from their current values once.
-        if "flights" in tables:
+        # Only PDF-derived trips have an immutable "awarded" baseline. Older
+        # releases accidentally seeded awarded_* values onto manual trips every
+        # time the app started; v24 explicitly prevents that.
+        if "flights" in tables and "trips" in tables:
             conn.execute(text(
                 "UPDATE flights SET "
                 "schedule_active = COALESCE(schedule_active, 1), "
@@ -56,6 +58,8 @@ def ensure_schema_extensions(engine) -> None:
                 "awarded_deadhead = COALESCE(awarded_deadhead, deadhead), "
                 "awarded_scheduled_departure_utc = COALESCE(awarded_scheduled_departure_utc, scheduled_departure_utc), "
                 "awarded_scheduled_arrival_utc = COALESCE(awarded_scheduled_arrival_utc, scheduled_arrival_utc) "
-                "WHERE awarded_flight_number IS NULL AND schedule_added = 0"
+                "WHERE awarded_flight_number IS NULL "
+                "AND COALESCE(schedule_added, 0) = 0 "
+                "AND trip_id IN (SELECT id FROM trips WHERE source = 'ups_pdf')"
             ))
 

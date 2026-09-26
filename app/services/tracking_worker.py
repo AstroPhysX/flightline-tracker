@@ -7,7 +7,7 @@ from datetime import datetime, time as dt_time, timedelta, timezone
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import Flight
+from ..models import Flight, Trip
 from . import tracker_settings, viewer_presence
 from .aeroapi import AeroApiError, sync_flight
 from .logbook_service import sync_completed_flight_to_logbook
@@ -32,7 +32,12 @@ def _utc(value):
 def _due_candidates(db: Session, now: datetime, poll_seconds: int, *, force: bool = False) -> list[Flight]:
     flights = (
         db.query(Flight)
-        .filter(Flight.actual_arrival_utc.is_(None))
+        .join(Trip, Flight.trip_id == Trip.id)
+        .filter(
+            Flight.schedule_active.is_(True),
+            Trip.active.is_(True),
+            Flight.actual_arrival_utc.is_(None),
+        )
         .order_by(Flight.flight_date.asc(), Flight.sequence.asc())
         .all()
     )
@@ -88,11 +93,21 @@ def _run_once_unlocked(*, force: bool = False, force_live_position: bool = False
         results = []
         for flight in candidates:
             try:
+                # Re-check membership immediately before any paid provider call.
+                # A schedule edit in another request may have removed this leg
+                # after the candidate list was built.
+                db.refresh(flight)
+                if not flight.schedule_active:
+                    continue
                 result = sync_flight(key, db, flight, budget, live_viewers=active_viewers > 0, force_live_position=force_live_position)
                 # Completed operating flights automatically become part of the
                 # lifetime logbook map. Later Logbook Pro imports supersede the
                 # automatic copy rather than duplicating it.
                 refreshed = db.get(Flight, flight.id)
+                if refreshed is not None:
+                    db.refresh(refreshed)
+                if refreshed is not None and not refreshed.schedule_active:
+                    continue
                 # Replay weather is deliberately tiny: exactly three local
                 # snapshots per flight (begin/middle/end). It is independent of
                 # viewer presence so replay still has context if nobody watched live.

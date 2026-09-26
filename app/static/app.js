@@ -980,8 +980,23 @@ async function loadScheduleEditor(explicitTripId=null){
         <label class="check"><input class="sf-deadhead" type="checkbox" ${f.deadhead?'checked':''} ${locked?'disabled':''}> ${escapeHtml(t('deadhead'))}</label>
       </div>
       <div class="schedule-actions">
-        ${locked?`<span class="hint">${escapeHtml(t('already_departed'))}</span>`:`<button type="button" class="sf-save">${escapeHtml(t('save_changes'))}</button><button type="button" class="sf-remove danger-button">${escapeHtml(t('remove_leg'))}</button><button type="button" class="sf-rebuild warning-button">${escapeHtml(t('rebuild_here'))}</button>${f.has_awarded_baseline?`<button type="button" class="sf-restore">${escapeHtml(t('restore_this_leg'))}</button>`:''}`}
+        ${locked
+          ? `<span class="hint">${escapeHtml(t('already_departed'))}</span><button type="button" class="sf-remove danger-button">${escapeHtml(t('remove_leg'))}</button>`
+          : `<button type="button" class="sf-save">${escapeHtml(t('save_changes'))}</button><button type="button" class="sf-remove danger-button">${escapeHtml(t('remove_leg'))}</button><button type="button" class="sf-rebuild warning-button">${escapeHtml(t('rebuild_here'))}</button>${f.has_awarded_baseline?`<button type="button" class="sf-restore">${escapeHtml(t('restore_this_leg'))}</button>`:''}`}
       </div>`;
+
+    const removeButton=row.querySelector('.sf-remove');
+    if(removeButton) removeButton.onclick=async()=>{
+      if(locked && !confirm(t('remove_tracked_confirm',{flight:f.flight_number}))) return;
+      const msg=document.getElementById('schedule-message');
+      const r=await adminFetch(`/api/flight/${f.id}/remove-from-schedule`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({remove_later_flights:false})});
+      if(!r) return;
+      const out=await r.json(); if(!r.ok){msg.className='hint api-error';msg.textContent=out.detail||t('could_not_remove');return;}
+      msg.className='hint api-ok';
+      msg.textContent=out.discarded_tracking?t('removed_tracked_done'):t('removed_done');
+      await loadScheduleEditor(); await refresh();
+    };
+
     if(!locked){
       row.querySelector('.sf-save').onclick=async()=>{
         const msg=document.getElementById('schedule-message');
@@ -997,13 +1012,6 @@ async function loadScheduleEditor(explicitTripId=null){
           const out=await r.json(); if(!r.ok){msg.textContent=out.detail||t('could_not_save');return;}
           msg.className='hint api-ok';msg.textContent=t('schedule_updated'); await loadScheduleEditor(); await refresh();
         }catch(err){msg.className='hint api-error';msg.textContent=err.message;}
-      };
-      row.querySelector('.sf-remove').onclick=async()=>{
-        const msg=document.getElementById('schedule-message');
-        const r=await adminFetch(`/api/flight/${f.id}/remove-from-schedule`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({remove_later_flights:false})});
-        if(!r) return;
-        const out=await r.json(); if(!r.ok){msg.className='hint api-error';msg.textContent=out.detail||t('could_not_remove');return;}
-        await loadScheduleEditor(); await refresh();
       };
       row.querySelector('.sf-rebuild').onclick=async()=>{
         if(!confirm(t('rebuild_confirm',{flight:f.flight_number}))) return;

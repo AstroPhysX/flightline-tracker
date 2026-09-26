@@ -1,20 +1,20 @@
-const CACHE='flightline-tracker-v23';
+const CACHE='flightline-tracker-v24';
 self.addEventListener('install', event => {
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([
     '/', '/history', '/logbook',
-    '/static/style.css?v=23',
-    '/static/i18n.js?v=23',
-    '/static/admin.js?v=23',
-    '/static/app.js?v=23',
-    '/static/history.js?v=23',
-    '/static/logbook.js?v=23',
-    '/static/theme.js?v=23',
-    '/static/icons/favicon-32.png',
-    '/static/icons/favicon-64.png',
-    '/static/icons/apple-touch-icon.png',
-    '/static/icons/icon-192.png',
-    '/static/icons/icon-512.png'
+    '/static/style.css?v=24',
+    '/static/i18n.js?v=24',
+    '/static/admin.js?v=24',
+    '/static/app.js?v=24',
+    '/static/history.js?v=24',
+    '/static/logbook.js?v=24',
+    '/static/theme.js?v=24',
+    '/static/icons/favicon-32.png?v=24',
+    '/static/icons/favicon-64.png?v=24',
+    '/static/icons/apple-touch-icon.png?v=24',
+    '/static/icons/icon-192.png?v=24',
+    '/static/icons/icon-512.png?v=24'
   ])));
 });
 self.addEventListener('activate', event => {

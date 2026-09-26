@@ -21,7 +21,7 @@ from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdat
 from .services.aeroapi import AeroApiError, test_connection as test_aeroapi_connection
 from .services.airport_resolver import ensure_airport
 from .services.dashboard import build_dashboard, select_trip
-from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking
+from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking, discard_tracking_data, repair_legacy_schedule_state
 from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive, schedule_sync
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
@@ -33,7 +33,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.3.0")
+app = FastAPI(title="Flightline Tracker", version="2.4.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
@@ -54,6 +54,12 @@ def _start_tracking_worker():
     from .db import SessionLocal
     db = SessionLocal()
     try:
+        # v24 repairs legacy rows where a removed leg was accidentally kept
+        # alive by FlightAware provider data, and removes old manual-trip
+        # "awarded" baselines created by an earlier migration bug.
+        weather_cleanup = repair_legacy_schedule_state(db)
+        for flight_id in weather_cleanup:
+            weather_archive.delete_flight_weather(flight_id)
         backfill_completed_tracker_flights(db)
     finally:
         db.close()
@@ -70,7 +76,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.3.0"}
+    return {"ok": True, "version": "2.4.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -335,7 +341,7 @@ def get_schedule(trip_id: int | None = None, db: Session = Depends(get_db), _adm
     trip = select_trip(db, trip_id)
     if not trip:
         return {"trip": None, "flights": []}
-    rows = sorted([f for f in trip.flights if f.schedule_active or f.actual_departure_utc or f.actual_arrival_utc], key=lambda f: (f.sequence if f.sequence > 0 else 9999, f.flight_date, f.id))
+    rows = sorted([f for f in trip.flights if f.schedule_active], key=lambda f: (f.sequence if f.sequence > 0 else 9999, f.flight_date, f.id))
     codes = {code for f in rows for code in (f.origin, f.destination) if code}
     airports = {a.code: a for a in db.query(Airport).filter(Airport.code.in_(codes)).all()} if codes else {}
     def airport_info(code):
@@ -389,26 +395,50 @@ def update_flight_schedule(flight_id: int, req: FlightScheduleUpdate, db: Sessio
 
 @app.post("/api/flight/{flight_id}/remove-from-schedule")
 def remove_from_schedule(flight_id: int, req: ScheduleRemoveRequest, db: Session = Depends(get_db), _admin: None = Depends(admin_auth.require_admin)):
+    """Remove a leg from *my* current trip, regardless of public-flight data.
+
+    FlightAware can successfully track a flight even when the user was moved off
+    that flight. Provider timestamps therefore must not make the row impossible
+    to remove. Removing a tracked row discards its provider/actual observations,
+    saved positions, auto-logbook copy, and optional replay-weather snapshots.
+    """
     flight = db.get(Flight, flight_id)
     if not flight:
         raise HTTPException(404, "Flight not found")
-    if flight.actual_departure_utc or flight.actual_arrival_utc:
-        raise HTTPException(400, "Already-flown legs are kept in the actual history and cannot be removed from it.")
     trip = flight.trip
+    if not flight.schedule_active:
+        return {"ok": True, "removed": 0, "already_removed": True}
+
     snapshot_awarded(flight)
+    weather_cleanup: list[int] = []
+
     if req.remove_later_flights:
-        removed = deactivate_from(db, trip, flight, include_selected=True)
+        removed, weather_cleanup = deactivate_from(db, trip, flight, include_selected=True)
     else:
-        if (flight.schedule_added or trip.source == "manual") and not flight.awarded_flight_number:
+        if (
+            flight.actual_departure_utc
+            or flight.actual_arrival_utc
+            or flight.provider_flight_id
+            or flight.positions
+        ):
+            discard_tracking_data(db, flight)
+            weather_cleanup.append(flight.id)
+
+        if trip.source == "manual" or (flight.schedule_added and not flight.awarded_flight_number):
             db.delete(flight)
             db.flush()
         else:
             flight.schedule_active = False
+            flight.sequence = 0
             flight.schedule_change_note = "Removed from current schedule"
+
         resequence_trip(db, trip)
         removed = 1
+
     db.commit()
-    return {"ok": True, "removed": removed}
+    for removed_flight_id in weather_cleanup:
+        weather_archive.delete_flight_weather(removed_flight_id)
+    return {"ok": True, "removed": removed, "discarded_tracking": len(weather_cleanup)}
 
 
 @app.post("/api/flight/{flight_id}/restore-awarded")

@@ -253,7 +253,11 @@ def sync_completed_flight_to_logbook(db: Session, flight: Flight, *, commit: boo
 def backfill_completed_tracker_flights(db: Session) -> int:
     flights = (
         db.query(Flight)
-        .filter(Flight.actual_arrival_utc.is_not(None), Flight.deadhead.is_(False))
+        .filter(
+            Flight.schedule_active.is_(True),
+            Flight.actual_arrival_utc.is_not(None),
+            Flight.deadhead.is_(False),
+        )
         .order_by(Flight.flight_date.asc(), Flight.id.asc())
         .all()
     )

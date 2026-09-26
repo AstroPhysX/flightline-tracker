@@ -1,6 +1,6 @@
 # Flightline Tracker
 
-**v23** uses the approved transparent top-down tri-jet aircraft artwork as the browser/PWA icon.
+**v24** uses the approved blue-background top-down aircraft icon and tightens schedule editing so removed legs stay removed.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
@@ -21,6 +21,21 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - Admin-only editing while normal viewers need no login
 - Persistent data under `/data`
 - GitHub → GHCR → Watchtower deployment support
+
+
+## v24 schedule-state fix
+
+`Current` now means exactly **the legs that are currently in your schedule**. FlightAware data can add live/actual information to a current leg, but it can no longer make a removed flight reappear.
+
+When upgrading an older database, v24 automatically repairs legacy schedule state:
+
+- removed manual/replacement legs are cleaned out rather than kept as hidden tombstones;
+- provider tracks/actual times attached to an already-removed leg are discarded;
+- manual trips no longer inherit a fake "awarded" baseline;
+- active legs are renumbered chronologically;
+- the tracking worker only polls active flights.
+
+If you remove a leg that already has FlightAware tracking data, the editor now allows it after a warning and discards that leg's saved provider track/actual times. PDF-awarded rows can still remain internally as the separate Awarded baseline.
 
 ## Run locally
 

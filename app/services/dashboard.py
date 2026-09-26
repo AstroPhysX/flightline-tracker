@@ -72,9 +72,9 @@ def select_trip(db: Session, trip_id: int | None = None) -> Trip | None:
 
 
 def _current_rows(trip: Trip):
-    # A deactivated flight that actually operated remains visible in the
-    # "Current / actually flown" history. A deactivated future plan does not.
-    rows = [f for f in trip.flights if f.schedule_active or f.actual_departure_utc or f.actual_arrival_utc]
+    # v24: Current means "belongs to the user's current trip", full stop.
+    # FlightAware/provider timestamps never resurrect a leg the user removed.
+    rows = [f for f in trip.flights if f.schedule_active]
     return sorted(rows, key=lambda f: (f.sequence if f.sequence > 0 else 9999, f.flight_date, f.id))
 
 
