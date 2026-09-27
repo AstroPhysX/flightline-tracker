@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Flightline Tracker UPS Schedule Sync",
+  "version": "2.0.0",
+  "description": "User-triggered UPS schedule sync: screen capture first, copied-text fallback if needed.",
+  "permissions": [
+    "activeTab",
+    "clipboardRead",
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_title": "Flightline schedule sync",
+    "default_popup": "popup.html"
+  },
+  "icons": {
+    "128": "icons/icon-128.png"
+  }
+}

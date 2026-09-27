@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Flightline Schedule Sync</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <h1>Flightline Sync</h1>
+    <p class="intro">Open UPS <strong>Time Detail</strong> from the first scheduled flight/date and click <strong>Sync current page</strong>. The extension first tries a one-click screen capture. If that cannot be read reliably, it asks you to use Ctrl+A / Ctrl+C as a fallback.</p>
+
+    <label for="tracker-url">Flightline Tracker URL</label>
+    <input id="tracker-url" type="url" placeholder="https://tracker.example.com" autocomplete="url">
+
+    <label for="sync-token">Schedule sync token</label>
+    <input id="sync-token" type="password" placeholder="SCHEDULE_SYNC_TOKEN" autocomplete="off">
+
+    <div class="row">
+      <button id="save" type="button" class="secondary">Save settings</button>
+      <button id="sync" type="button" class="primary">Sync current page</button>
+    </div>
+
+    <p id="status" class="status" aria-live="polite"></p>
+    <details>
+      <summary>Safety / privacy</summary>
+      <p>The extension never logs in, handles MFA, clicks UPS controls, polls UPS in the background, reads UPS cookies, or sends requests to UPS. A screen capture happens only after you press Sync. It is sent only to your configured self-hosted Flightline Tracker for in-memory OCR and is not stored. If OCR is uncertain, no schedule change is made and the extension falls back to copied text.</p>
+    </details>
+  </main>
+  <script src="parser.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

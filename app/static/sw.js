@@ -1,4 +1,4 @@
-const CACHE='flightline-tracker-v24';
+const CACHE='flightline-tracker-v26';
 self.addEventListener('install', event => {
   self.skipWaiting();
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([

@@ -22,7 +22,7 @@ from .services.aeroapi import AeroApiError, test_connection as test_aeroapi_conn
 from .services.airport_resolver import ensure_airport
 from .services.dashboard import build_dashboard, select_trip
 from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking, discard_tracking_data, repair_legacy_schedule_state
-from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive, schedule_sync
+from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive, schedule_sync, schedule_ocr
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
 from .services.ups_pdf_import import import_awarded_line_pdfs
@@ -33,7 +33,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.4.0")
+app = FastAPI(title="Flightline Tracker", version="2.6.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
@@ -76,7 +76,7 @@ templates.env.globals["timing_summary"] = timing_summary
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.4.0"}
+    return {"ok": True, "version": "2.6.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -185,15 +185,28 @@ def viewer_heartbeat(req: ViewerHeartbeat):
     return {"ok": True, "active_viewers": active, "refresh_triggered": triggered}
 
 
+@app.post("/api/integrations/ups-schedule/ocr")
+async def ocr_ups_schedule_screenshot(
+    screenshot: UploadFile = File(...),
+    _sync: None = Depends(schedule_sync.require_sync_token),
+):
+    # User-triggered only: Edge captures the already-visible tab after the user
+    # presses Sync. The screenshot is processed in memory and is not stored.
+    raw = await screenshot.read()
+    return schedule_ocr.ocr_schedule_screenshot(raw)
+
+
 @app.post("/api/integrations/ups-schedule")
 def receive_ups_schedule_sync(
     req: BrowserScheduleSync,
     request: Request,
+    db: Session = Depends(get_db),
     _sync: None = Depends(schedule_sync.require_sync_token),
 ):
-    # Browser-extension foundation only: stage a normalized snapshot for later
-    # compare/preview. Never auto-apply an external DOM parse to the live trip.
-    return schedule_sync.store(req.model_dump(mode="json"))
+    # Manual-trigger browser sync. The extension never automates UPS/MFA; this
+    # endpoint receives only locally-normalized schedule records after the user
+    # explicitly presses Sync in Edge.
+    return schedule_sync.store_and_apply(req.model_dump(mode="json"), db)
 
 
 @app.get("/api/integrations/ups-schedule/status")

@@ -19,6 +19,7 @@ SEED_AIRPORTS = {
     "DFW": (32.8998, -97.0403, "America/Chicago", "Dallas/Fort Worth International", "Dallas"),
     "ANC": (61.1743, -149.9983, "America/Anchorage", "Ted Stevens Anchorage International", "Anchorage"),
     "ICN": (37.4602, 126.4407, "Asia/Seoul", "Incheon International", "Seoul"),
+    "CGO": (34.5197, 113.8409, "Asia/Shanghai", "Zhengzhou Xinzheng International", "Zhengzhou"),
     "CGN": (50.8659, 7.1427, "Europe/Berlin", "Cologne Bonn Airport", "Cologne"),
     "HNL": (21.3187, -157.9225, "Pacific/Honolulu", "Daniel K. Inouye International", "Honolulu"),
     "ONT": (34.0560, -117.6012, "America/Los_Angeles", "Ontario International", "Ontario"),

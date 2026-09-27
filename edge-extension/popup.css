@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { margin: 0; min-width: 380px; background: Canvas; color: CanvasText; }
+main { padding: 16px; }
+h1 { font-size: 20px; margin: 0 0 8px; }
+.intro { font-size: 13px; line-height: 1.45; margin: 0 0 14px; }
+label { display: block; font-size: 12px; font-weight: 650; margin: 10px 0 5px; }
+input { box-sizing: border-box; width: 100%; padding: 9px 10px; border: 1px solid #8b8b8b; border-radius: 6px; font: inherit; background: Field; color: FieldText; }
+.row { display: flex; gap: 8px; margin-top: 14px; }
+button { border: 0; border-radius: 7px; padding: 9px 12px; font-weight: 650; cursor: pointer; }
+button:disabled { opacity: .55; cursor: wait; }
+.primary { flex: 1; background: #1769aa; color: white; }
+.secondary { background: ButtonFace; color: ButtonText; border: 1px solid #8b8b8b; }
+.status { min-height: 36px; margin: 12px 0 0; font-size: 13px; line-height: 1.4; }
+.status.ok { color: #18733c; }
+.status.error { color: #b42318; }
+.status.warn { color: #9a6700; }
+kbd { font: inherit; border: 1px solid #999; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+details { margin-top: 8px; font-size: 12px; line-height: 1.4; }
+summary { cursor: pointer; font-weight: 650; }

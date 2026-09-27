@@ -1,6 +1,6 @@
 # Flightline Tracker
 
-**v24** uses the approved blue-background top-down aircraft icon and tightens schedule editing so removed legs stay removed.
+**v26** adds a user-triggered one-click UPS Time Detail screen reader with a conservative Ctrl+A / Ctrl+C fallback, while retaining the v24 schedule-state protections.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
@@ -21,7 +21,36 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - Admin-only editing while normal viewers need no login
 - Persistent data under `/data`
 - GitHub → GHCR → Watchtower deployment support
+- Manual-trigger Edge extension for UPS Work Schedule → Current schedule sync
 
+
+## v26 hybrid UPS Work Schedule sync
+
+The `edge-extension/` folder contains the desktop Microsoft Edge extension. It remains deliberately user-triggered and narrowly scoped:
+
+- no UPS login or MFA automation;
+- no content script injected into UPS/Zscaler;
+- no cookie access;
+- no debugger permission;
+- no background polling or automatic clicking;
+- no jumpseat or schedule-adjustment automation;
+- nothing happens until the user presses **Sync current page**.
+
+Normal workflow: manually open **Time Detail** from the first scheduled flight/date and press **Sync current page**. Edge captures only the visible tab, sends the image to the user's own Flightline Tracker, and the tracker runs Tesseract OCR in memory. The screenshot is not stored. The extension then validates every in-pay-period row before sending normalized schedule data into **Current**.
+
+The screen reader is intentionally conservative. If the full Time Detail table does not fit in the visible viewport, OCR quality is low, or any in-period row cannot be parsed safely, **no schedule change is made**. The extension remembers a short-lived fallback state and asks the user to press **Ctrl+A / Ctrl+C**, reopen the popup, and click **Sync copied text**. The older calendar-plus-Time-Detail copied-text cross-check remains available as an optional fallback.
+
+The full signed Zscaler URL, UPS cookies, MFA information, and employee identity fields are not included in normalized schedule payloads.
+
+On the tracker side, synchronization updates **Current** while preserving PDF **Awarded** rows. Completed/actually-departed legs are not deleted or rewritten by later schedule synchronization.
+
+Enable the receiver with a long random `SCHEDULE_SYNC_TOKEN` in Portainer/Compose, for example:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Then enter the same token and tracker URL in the Edge extension. See `edge-extension/README.md` for installation and use.
 
 ## v24 schedule-state fix
 
@@ -64,6 +93,7 @@ TRACKER_DATA_PATH=/volume1/docker/flightline-tracker/data
 ADMIN_PASSWORD=choose-a-strong-admin-password
 ADMIN_COOKIE_SECURE=auto
 WEATHER_ARCHIVE_MAX_MB=100
+SCHEDULE_SYNC_TOKEN=generate-a-long-random-token
 ```
 
 Keep `/data` mounted to persistent storage. It contains the database, flight history, saved tracks, logbook, settings and weather snapshots, so container updates do not erase your history.
@@ -108,13 +138,22 @@ git commit -m "Describe the update"
 git push origin main
 ```
 
-## Future UPS schedule extension
+## UPS schedule extension
 
-The server already has a disabled-by-default staging endpoint for a future Edge/Chromium extension. The intended design is conservative: **you sign in to UPS and complete MFA normally**, then the extension reads only the schedule page you are already viewing and sends normalized schedule data to Flightline Tracker for review.
+The schedule-sync receiver is active when `SCHEDULE_SYNC_TOKEN` is configured. The Edge extension remains in the separate `edge-extension/` directory in this repository.
 
-The future extension should not automate login/MFA, read authentication cookies, or silently change the tracker schedule. It should use minimal host permissions and a separate `SCHEDULE_SYNC_TOKEN` for the tracker API.
+v26 uses a conservative hybrid workflow:
 
-Because UPS or your employer may have rules restricting browser extensions or automated extraction on internal systems, verify that such use is permitted before deploying the extension against a production UPS site.
+1. You manually open UPS **Time Detail** from the first scheduled flight/date.
+2. You explicitly click **Sync current page** in the extension.
+3. Edge captures only the visible tab and sends that image to your own Flightline Tracker `/api/integrations/ups-schedule/ocr` endpoint.
+4. The tracker runs local Tesseract OCR in memory and returns text; it does not save the screenshot.
+5. The extension validates every in-pay-period row before sending normalized schedule JSON to `/api/integrations/ups-schedule`.
+6. If OCR is unclear or the whole table is not visible, nothing is applied and the extension requests the existing Ctrl+A / Ctrl+C copied-text fallback.
+
+There is no UPS login/MFA automation, no UPS form submission, no cookies/debugger permission, no background polling, and no automated clicking of the UPS site. The integration remains disabled when `SCHEDULE_SYNC_TOKEN` is blank.
+
+The Docker image now includes `tesseract-ocr`, Pillow, and `pytesseract` for the local screenshot reader.
 
 ## Data providers
 

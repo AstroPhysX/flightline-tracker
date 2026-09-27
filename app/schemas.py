@@ -66,6 +66,8 @@ class BrowserScheduleFlight(BaseModel):
     deadhead: bool = False
     scheduled_departure_utc: datetime | None = None
     scheduled_arrival_utc: datetime | None = None
+    actual_departure_utc: datetime | None = None
+    actual_arrival_utc: datetime | None = None
     schedule_code: str | None = Field(default=None, max_length=32)
 
 
@@ -85,4 +87,11 @@ class BrowserScheduleSync(BaseModel):
     page_url: str | None = Field(default=None, max_length=1000)
     bid_period: str | None = Field(default=None, max_length=40)
     line_number: int | None = None
+    pay_period_start: date | None = None
+    pay_period_end: date | None = None
+    coverage_start_date: date | None = None
+    coverage_end_date: date | None = None
+    fleet: str | None = Field(default=None, max_length=24)
+    seat: str | None = Field(default=None, max_length=24)
+    domicile: str | None = Field(default=None, max_length=8)
     trips: list[BrowserScheduleTrip] = Field(default_factory=list, max_length=100)
