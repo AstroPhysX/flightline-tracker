@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     dallas_timezone: str = "America/Chicago"
     admin_session_minutes: int = 30
     admin_cookie_secure: str = "auto"
-    # Separate bearer token reserved for the future UPS schedule browser extension.
+    # Separate bearer token used by the user-triggered UPS schedule/jumpseat browser extension.
     # Leave blank to keep the integration endpoint disabled.
     schedule_sync_token: str = ""
 

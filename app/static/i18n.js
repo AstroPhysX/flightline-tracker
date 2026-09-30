@@ -121,6 +121,10 @@
     times_flown:'Количество полётов', total_route_time:'Общее время по маршруту', average_flight_time:'Среднее время полёта', direction_breakdown:'По направлениям', aircraft_breakdown:'Типы самолётов', registration_breakdown:'Регистрации', average_time_estimated:'* Оценка для записей Logbook Pro с несколькими участками и одной общей продолжительностью.', map_only:'Только карта', show_ui:'Показать интерфейс', aircraft_types_selected:'Выбрано типов самолётов: {count}', visits:'Посещения', flights_touching_airport:'Полёты через аэропорт', departures:'Вылеты', arrivals:'Прилёты', logged_hours:'Налёт', first_visit:'Первое посещение', last_visit:'Последнее посещение', top_connections:'Основные направления', on_ground_at:'На земле в {place}', due_now:'Время вылета', scheduled_flight_time:'Плановое время полёта', typical_flight_time:'Обычное время по журналу', estimated_flight_time:'Расчётное время полёта', typical_short:'~{time} обычно', estimated_short:'~{time} расчётно', airport_aliases:'Также обозначается', suspicious_hidden:'С карты скрыто подозрительных исторических маршрутов: {count}', replay_weather_archived:'Архивный радар · {time}', replay_weather_recent:'Радар RainViewer · {time}', replay_weather_unavailable:'Исторический радар для этого времени повтора недоступен'
   });
 
+  Object.assign(dictionaries.en, {install_app:'Install app'});
+  Object.assign(dictionaries.fr, {install_app:"Installer l’application"});
+  Object.assign(dictionaries.ru, {install_app:'Установить приложение'});
+
   const supported=['en','fr','ru'];
   let stored=localStorage.getItem(STORAGE_KEY);
   let language=supported.includes(stored) ? stored : 'en';

@@ -47,6 +47,10 @@ def _quality(text: str) -> int:
     lowered = text.lower()
     if "time detail" in lowered:
         score += 6
+    if "upcoming jumpseats confirmed" in lowered:
+        score += 8
+    if "search flights" in lowered and "jumpseat" in lowered:
+        score += 3
     if "pairing detail for pay period" in lowered:
         score += 8
     if "schd out" in lowered or "schdout" in lowered:
@@ -65,6 +69,8 @@ def _classify(text: str) -> str:
         return "time_detail"
     if "unofficial schedule" in lowered or "crew access roster has official schedule" in lowered:
         return "calendar"
+    if "upcoming jumpseats confirmed" in lowered or ("jumpseat" in lowered and "search flights" in lowered):
+        return "jumpseat"
     return "unknown"
 
 
@@ -85,9 +91,12 @@ def ocr_schedule_screenshot(raw: bytes) -> dict[str, Any]:
 
     lowered = text.lower()
     complete_view = (
-        page_type == "time_detail"
-        and "pairing detail for pay period" in lowered
-        and ("attention crewmember" in lowered or "copyright" in lowered)
+        (page_type == "time_detail"
+         and "pairing detail for pay period" in lowered
+         and ("attention crewmember" in lowered or "copyright" in lowered))
+        or
+        (page_type == "jumpseat"
+         and ("upcoming jumpseats standby" in lowered or "no standby jumpseats" in lowered))
     )
 
     return {

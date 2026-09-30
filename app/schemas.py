@@ -95,3 +95,23 @@ class BrowserScheduleSync(BaseModel):
     seat: str | None = Field(default=None, max_length=24)
     domicile: str | None = Field(default=None, max_length=8)
     trips: list[BrowserScheduleTrip] = Field(default_factory=list, max_length=100)
+
+class BrowserJumpseatEntry(BaseModel):
+    external_id: str | None = Field(default=None, max_length=160)
+    flight_number: str = Field(min_length=1, max_length=32)
+    flight_date: date
+    origin: str = Field(min_length=3, max_length=8)
+    destination: str = Field(min_length=3, max_length=8)
+    deadhead: bool = True
+    scheduled_departure_utc: datetime
+    scheduled_arrival_utc: datetime
+
+
+class BrowserJumpseatSync(BaseModel):
+    schema_version: int = Field(default=1, ge=1, le=20)
+    source: str = Field(default="ups-edge-extension-jumpseat", max_length=80)
+    extension_version: str | None = Field(default=None, max_length=40)
+    captured_at: datetime
+    hub_airport: str | None = Field(default="DFW", max_length=8)
+    complete_view: bool = True
+    entries: list[BrowserJumpseatEntry] = Field(default_factory=list, max_length=100)

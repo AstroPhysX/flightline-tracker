@@ -14,7 +14,7 @@ from ..models import Flight
 
 RAINVIEWER_META = "https://api.rainviewer.com/public/weather-maps.json"
 ARCHIVE_ZOOM = 4
-MAX_FLIGHT_SNAPSHOTS = 3
+MAX_FLIGHT_SNAPSHOTS = 7
 GLOBAL_LIMIT_BYTES = max(16, int(os.getenv("WEATHER_ARCHIVE_MAX_MB", "100"))) * 1024 * 1024
 
 
@@ -134,33 +134,57 @@ def _aware(value: datetime | None) -> datetime | None:
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
+def _planned_duration_hours(flight: Flight) -> float | None:
+    dep = _aware(flight.actual_departure_utc or flight.scheduled_departure_utc)
+    arr = _aware(flight.estimated_arrival_utc or flight.provider_scheduled_arrival_utc or flight.scheduled_arrival_utc)
+    if not dep or not arr or arr <= dep:
+        return None
+    return (arr - dep).total_seconds() / 3600.0
+
+
+def _phase_plan(flight: Flight) -> list[tuple[str, float]]:
+    """More replay context without turning weather into continuous archiving.
+
+    Normal flights keep five points; long-haul flights (8h+) keep seven. The
+    global archive-size cap still applies.
+    """
+    duration = _planned_duration_hours(flight)
+    if duration is not None and duration >= 8.0:
+        return [
+            ("begin", 0.00), ("early", 0.15), ("third", 0.30),
+            ("middle", 0.50), ("two_thirds", 0.70), ("late", 0.85),
+            ("end", 0.96),
+        ]
+    return [
+        ("begin", 0.00), ("quarter", 0.22), ("middle", 0.48),
+        ("three_quarter", 0.74), ("end", 0.94),
+    ]
+
+
 def _snapshot_phase(flight: Flight, rows: list[dict], now: datetime) -> str | None:
-    """Choose one of exactly three replay-weather moments: begin/middle/end."""
     phases = {str(row.get("phase") or "") for row in rows}
+    plan = _phase_plan(flight)
     if flight.actual_arrival_utc:
         return "end" if "end" not in phases else None
     dep = _aware(flight.actual_departure_utc)
     if dep is None:
         return None
-    if "begin" not in phases:
-        return "begin"
     end = _aware(flight.estimated_arrival_utc or flight.provider_scheduled_arrival_utc or flight.scheduled_arrival_utc)
     if end and end > dep:
         progress = max(0.0, min(1.25, (now - dep).total_seconds() / (end - dep).total_seconds()))
-        if "middle" not in phases and progress >= 0.42:
-            return "middle"
-        if "end" not in phases and progress >= 0.82:
-            return "end"
+        for phase, threshold in plan:
+            if phase not in phases and progress >= threshold:
+                return phase
+    elif "begin" not in phases:
+        return "begin"
     return None
 
-
 def archive_for_flight(flight: Flight) -> dict | None:
-    """Archive at most three compact RainViewer tiles for replay.
+    """Archive a small set of compact RainViewer tiles for replay.
 
-    One tile is kept near the beginning, one around the middle, and one near the
-    end/landing. This runs independently of whether a browser is watching, so a
-    later replay still has approximate weather context without continuously
-    archiving radar throughout a long flight.
+    Normal flights keep up to five snapshots and long-haul flights up to seven,
+    distributed through the flight. This still runs independently of whether a
+    browser is watching and remains bounded by the global archive-size cap.
     """
     if not flight.actual_departure_utc:
         return None
@@ -246,7 +270,7 @@ def delete_flight_weather(flight_id: int) -> None:
 
 
 def prune_archive() -> dict:
-    """Collapse legacy hourly archives to at most begin/middle/end per flight."""
+    """Best-effort cleanup while preserving the richer v27 replay archive."""
     root = _root()
     removed_files = 0
     kept_files = 0
@@ -255,33 +279,24 @@ def prune_archive() -> dict:
             continue
         flight_id = int(flight_dir.name)
         rows = [row for row in _load_index(flight_id) if str(row.get("file") or "")]
-        existing = [row for row in rows if (flight_dir / str(row.get("file"))).exists()]
-        if len(existing) <= 3 and all(row.get("phase") for row in existing):
-            kept_files += len(existing)
-            continue
-        existing.sort(key=lambda row: int(row.get("radar_time") or 0))
-        selected: list[dict] = []
-        if existing:
-            selected.append({**existing[0], "phase": "begin"})
-        if len(existing) >= 3:
-            selected.append({**existing[len(existing)//2], "phase": "middle"})
-        if len(existing) >= 2:
-            selected.append({**existing[-1], "phase": "end"})
-        # De-duplicate a tiny archive where first/middle/last point to the same file.
-        dedup: dict[str, dict] = {}
-        for row in selected:
-            dedup[str(row.get("file"))] = row
-        selected = list(dedup.values())
-        keep = {str(row.get("file")) for row in selected}
-        for row in existing:
-            filename = str(row.get("file"))
-            if filename not in keep:
-                try:
-                    (flight_dir / filename).unlink(missing_ok=True)
-                    removed_files += 1
-                except OSError:
-                    pass
-        _save_index(flight_id, selected)
-        kept_files += len(selected)
+        rows = [row for row in rows if (flight_dir / str(row.get("file"))).exists()]
+        rows.sort(key=lambda row: int(row.get("radar_time") or 0))
+        if len(rows) > MAX_FLIGHT_SNAPSHOTS:
+            # Keep evenly distributed snapshots rather than simply the newest.
+            indexes = sorted({round(i * (len(rows) - 1) / (MAX_FLIGHT_SNAPSHOTS - 1)) for i in range(MAX_FLIGHT_SNAPSHOTS)})
+            keep_rows = [rows[i] for i in indexes]
+            keep_names = {str(r.get("file")) for r in keep_rows}
+            for row in rows:
+                filename = str(row.get("file"))
+                if filename not in keep_names:
+                    try:
+                        (flight_dir / filename).unlink(missing_ok=True)
+                        removed_files += 1
+                    except OSError:
+                        pass
+            rows = keep_rows
+        _save_index(flight_id, rows)
+        kept_files += len(rows)
     _enforce_global_limit()
     return {"removed": removed_files, "kept": kept_files}
+

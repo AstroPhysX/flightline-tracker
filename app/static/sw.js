@@ -1,21 +1,22 @@
-const CACHE='flightline-tracker-v26';
+const CACHE='flightline-tracker-v27';
+const CORE=[
+  '/', '/history', '/logbook',
+  '/static/style.css?v=27',
+  '/static/i18n.js?v=27',
+  '/static/admin.js?v=27',
+  '/static/app.js?v=27',
+  '/static/history.js?v=27',
+  '/static/logbook.js?v=27',
+  '/static/theme.js?v=27',
+  '/static/icons/favicon-32.png?v=27',
+  '/static/icons/favicon-64.png?v=27',
+  '/static/icons/apple-touch-icon.png?v=27',
+  '/static/icons/icon-192.png?v=27',
+  '/static/icons/icon-512.png?v=27'
+];
 self.addEventListener('install', event => {
   self.skipWaiting();
-  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll([
-    '/', '/history', '/logbook',
-    '/static/style.css?v=24',
-    '/static/i18n.js?v=24',
-    '/static/admin.js?v=24',
-    '/static/app.js?v=24',
-    '/static/history.js?v=24',
-    '/static/logbook.js?v=24',
-    '/static/theme.js?v=24',
-    '/static/icons/favicon-32.png?v=24',
-    '/static/icons/favicon-64.png?v=24',
-    '/static/icons/apple-touch-icon.png?v=24',
-    '/static/icons/icon-192.png?v=24',
-    '/static/icons/icon-512.png?v=24'
-  ])));
+  event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(CORE)));
 });
 self.addEventListener('activate', event => {
   event.waitUntil(Promise.all([
@@ -25,5 +26,5 @@ self.addEventListener('activate', event => {
 });
 self.addEventListener('fetch', event => {
   if (event.request.method !== 'GET') return;
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+  event.respondWith(fetch(event.request).catch(() => caches.match(event.request).then(hit => hit || (event.request.mode === 'navigate' ? caches.match('/') : Response.error()))));
 });

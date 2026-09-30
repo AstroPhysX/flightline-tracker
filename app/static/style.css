@@ -385,3 +385,37 @@ body.map-only .weather-credit { bottom:12px; }
 .status-next-main { color:var(--text); font-size:12px; line-height:1.45; }
 .status-next-gap { color:var(--muted); font-size:11px; font-weight:700; margin-top:3px; }
 .status-next-note { color:var(--muted); font-size:10px; font-weight:800; margin-top:2px; }
+
+/* v27 mobile current-trip layout: full status, minimal chrome. */
+.mobile-menu-button { display:none; }
+@media (max-width:760px) {
+  .topbar {
+    left:auto; right:8px; top:58px; width:min(300px,calc(100vw - 16px));
+    min-height:0; height:auto; padding:0; border:0; background:transparent;
+    box-shadow:none; backdrop-filter:none; pointer-events:none;
+  }
+  .topbar > div:first-child { display:none; }
+  .topbar nav {
+    display:none; position:static; height:auto; max-height:70dvh; padding:8px;
+    flex-direction:column; align-items:stretch; overflow:auto; pointer-events:auto;
+    border:1px solid var(--border); border-radius:14px; background:var(--panel);
+    box-shadow:0 12px 35px rgba(0,0,0,.45);
+  }
+  body.mobile-menu-open .topbar nav { display:flex; }
+  .topbar nav a, .topbar nav button { width:100%; min-height:40px; justify-content:flex-start; }
+  .mobile-menu-button {
+    display:block; position:fixed; z-index:950; right:8px; top:max(8px,env(safe-area-inset-top));
+    width:44px; height:44px; padding:0; border-radius:13px; font-size:21px;
+    background:var(--panel); color:var(--text); border:1px solid var(--border); box-shadow:0 8px 24px rgba(0,0,0,.35);
+  }
+  .status-panel {
+    left:8px; right:60px; top:max(8px,env(safe-area-inset-top)); bottom:auto;
+    width:auto; max-height:none; overflow:visible; padding:11px 13px;
+  }
+  .status-detail { font-size:12px; line-height:1.35; }
+  .metrics-grid strong { font-size:13px; }
+  .leaflet-bottom { bottom:12px; }
+}
+@media (max-width:420px) {
+  .status-panel { right:56px; max-height:none; }
+}

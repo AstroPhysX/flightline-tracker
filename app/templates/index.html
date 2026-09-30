@@ -5,15 +5,20 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="darkreader-lock">
   <meta name="theme-color" content="#11151b">
-  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png?v=24">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=24">
-  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=24">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Flightline">
+  <link rel="shortcut icon" href="/favicon.ico?v=27">
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png?v=27">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=27">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=27">
   <title data-i18n="app_title">Flightline Tracker</title>
-  <link rel="manifest" href="/static/manifest.webmanifest?v=24">
-  <script src="/static/theme.js?v=24"></script>
+  <link rel="manifest" href="/static/manifest.webmanifest?v=27">
+  <script src="/static/theme.js?v=27"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/static/style.css?v=24">
+  <link rel="stylesheet" href="/static/style.css?v=27">
 </head>
 <body>
   <div id="map"></div>
@@ -33,8 +38,10 @@
       <button id="manage-button" class="manage-button" data-i18n="manage">Manage</button>
       <button id="theme-toggle" class="theme-toggle" title="Theme" aria-label="Theme">☾</button>
       <button id="language-toggle" class="language-toggle" title="Language">EN</button>
+      <button id="pwa-install-button" class="hidden" type="button" data-i18n="install_app">Install app</button>
     </nav>
   </header>
+  <button id="mobile-menu-button" class="mobile-menu-button" type="button" aria-label="Menu" title="Menu">☰</button>
 
   <section class="status-panel glass">
     <div class="status-row">
@@ -161,8 +168,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
-  <script src="/static/i18n.js?v=24"></script>
-  <script src="/static/admin.js?v=24"></script>
-  <script src="/static/app.js?v=24"></script>
+  <script src="/static/i18n.js?v=27"></script>
+  <script src="/static/admin.js?v=27"></script>
+  <script src="/static/app.js?v=27"></script>
 </body>
 </html>

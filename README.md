@@ -1,6 +1,6 @@
 # Flightline Tracker
 
-**v26** adds a user-triggered one-click UPS Time Detail screen reader with a conservative Ctrl+A / Ctrl+C fallback, while retaining the v24 schedule-state protections.
+**v27** adds a simplified UPS sync extension, confirmed-jumpseat import as DH, a fix for zero-padded UPS flight numbers in FlightAware tracking, improved PWA/mobile behavior, and richer weather replay.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
@@ -17,40 +17,34 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - Automatic rest detection for 10+ hour gaps
 - Lifetime logbook map with route/airport statistics and aircraft filters
 - Logbook Pro CSV and native `.lbk` import
-- Three small radar snapshots per tracked flight for replay context
+- 5 replay-weather snapshots on normal flights and up to 7 on long-haul flights
 - Admin-only editing while normal viewers need no login
 - Persistent data under `/data`
 - GitHub → GHCR → Watchtower deployment support
 - Manual-trigger Edge extension for UPS Work Schedule → Current schedule sync
 
 
-## v26 hybrid UPS Work Schedule sync
+## v27 UPS Work Schedule + Jumpseat sync
 
-The `edge-extension/` folder contains the desktop Microsoft Edge extension. It remains deliberately user-triggered and narrowly scoped:
+The `edge-extension/` folder contains the desktop Edge extension. The normal popup is intentionally small: one Sync button plus a hidden settings menu. A background service worker only recognizes supported tabs and can show a brief “ready to sync” notification; it does not scrape or interact with UPS automatically.
 
-- no UPS login or MFA automation;
-- no content script injected into UPS/Zscaler;
-- no cookie access;
-- no debugger permission;
-- no background polling or automatic clicking;
-- no jumpseat or schedule-adjustment automation;
-- nothing happens until the user presses **Sync current page**.
+Schedule sync remains screen-capture-first with a Ctrl+A / Ctrl+C fallback if OCR is incomplete or uncertain. Confirmed jumpseats can now be synchronized from the Crew Jumpseat screen and are stored as deadheads. The default filter imports only rows touching DFW; this can be changed in extension settings.
 
-Normal workflow: manually open **Time Detail** from the first scheduled flight/date and press **Sync current page**. Edge captures only the visible tab, sends the image to the user's own Flightline Tracker, and the tracker runs Tesseract OCR in memory. The screenshot is not stored. The extension then validates every in-pay-period row before sending normalized schedule data into **Current**.
+The extension never automates login/MFA, search, jumpseat booking, Autobook, schedule adjustments, form submission, UPS cookies, or background UPS requests. Nothing is sent until the user presses Sync.
 
-The screen reader is intentionally conservative. If the full Time Detail table does not fit in the visible viewport, OCR quality is low, or any in-period row cannot be parsed safely, **no schedule change is made**. The extension remembers a short-lived fallback state and asks the user to press **Ctrl+A / Ctrl+C**, reopen the popup, and click **Sync copied text**. The older calendar-plus-Time-Detail copied-text cross-check remains available as an optional fallback.
+`SCHEDULE_SYNC_TOKEN` is still required in Docker/Portainer.
 
-The full signed Zscaler URL, UPS cookies, MFA information, and employee identity fields are not included in normalized schedule payloads.
+### Tracking fix for zero-padded UPS identifiers
 
-On the tracker side, synchronization updates **Current** while preserving PDF **Awarded** rows. Completed/actually-departed legs are not deleted or rewritten by later schedule synchronization.
+UPS internal pages may display a flight such as `UPS0751` while FlightAware publishes the provider designator as `UPS751`. v27 preserves the UPS display number in the schedule but removes display-only leading zeros when querying AeroAPI. This fixes a failure mode where the tracker repeatedly polled a real flight but could not match it.
 
-Enable the receiver with a long random `SCHEDULE_SYNC_TOKEN` in Portainer/Compose, for example:
+### PWA / phone / icons
 
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-Then enter the same token and tracker URL in the Edge extension. See `edge-extension/README.md` for installation and use.
+- service worker is now served from `/sw.js` with root scope so the main app is actually controlled by the PWA service worker;
+- manifest adds explicit scope/id and maskable icons;
+- favicon/PWA asset versions are bumped and `/favicon.ico` serves the current blue-background icon;
+- Chromium can show an in-app **Install app** button when installation is available;
+- on phones the large top bar is replaced by a small hamburger menu and the full status panel stays visible.
 
 ## v24 schedule-state fix
 
@@ -108,7 +102,7 @@ When nobody is viewing, tracking falls back to a slower cadence. After landing, 
 
 ## Weather replay
 
-At most three compact RainViewer radar tiles are saved for a tracked flight: beginning, middle and end. The archive has a configurable global cap (`WEATHER_ARCHIVE_MAX_MB`, default 100 MB).
+Normal flights keep up to five compact RainViewer replay snapshots; flights planned for 8 hours or more keep up to seven, distributed through the flight. The archive still uses the configurable global cap (`WEATHER_ARCHIVE_MAX_MB`, default 100 MB).
 
 The live Weather on/off preference is saved separately in each browser and defaults to **On**.
 
@@ -142,7 +136,7 @@ git push origin main
 
 The schedule-sync receiver is active when `SCHEDULE_SYNC_TOKEN` is configured. The Edge extension remains in the separate `edge-extension/` directory in this repository.
 
-v26 uses a conservative hybrid workflow:
+v27 uses a conservative user-triggered workflow:
 
 1. You manually open UPS **Time Detail** from the first scheduled flight/date.
 2. You explicitly click **Sync current page** in the extension.
@@ -153,7 +147,7 @@ v26 uses a conservative hybrid workflow:
 
 There is no UPS login/MFA automation, no UPS form submission, no cookies/debugger permission, no background polling, and no automated clicking of the UPS site. The integration remains disabled when `SCHEDULE_SYNC_TOKEN` is blank.
 
-The Docker image now includes `tesseract-ocr`, Pillow, and `pytesseract` for the local screenshot reader.
+The Docker image includes `tesseract-ocr`, Pillow, and `pytesseract` for local screenshot reading. The extension ZIP can be produced by `.github/workflows/package-edge-extension.yml` for Edge Add-ons or manual testing.
 
 ## Data providers
 

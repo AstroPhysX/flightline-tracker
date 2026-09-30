@@ -380,5 +380,60 @@
     };
   }
 
-  global.FlightlineUpsParser = { parseUpsTimeDetail, parseUpsTimeDetailOcr, parseUpsCalendar, useCalendarCoverage };
+
+
+  function parseJumpseatText(text, extensionVersion = '3.0.0', options = {}) {
+    const normalized = String(text || '').replace(/\r\n?/g, '\n');
+    if (!/Upcoming\s+Jumpseats\s+Confirmed/i.test(normalized) && !/Crew\s+Jumpseat/i.test(normalized)) {
+      throw new Error('The page does not look like the UPS confirmed jumpseat screen.');
+    }
+    const hub = String(options.hubAirport || 'DFW').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+    const onlyHub = options.onlyHub !== false;
+    const rowRe = /\b(UPS\s*[0-9O]{1,5})\s+([A-Z]{3})\s+([A-Z]{3})\s+(\d{1,2}\/\d{1,2}\/\d{2})\s+(\d{1,2}):(\d{2})Z\s+(\d{1,2}):(\d{2})Z\b/gi;
+    const rows = [];
+    const seen = new Set();
+    for (const m of normalized.matchAll(rowRe)) {
+      const flightNumber = m[1].replace(/\s+/g,'').toUpperCase().replace(/O/g,'0');
+      const origin = m[2].toUpperCase();
+      const destination = m[3].toUpperCase();
+      if (onlyHub && hub && origin !== hub && destination !== hub) continue;
+      const flightDate = parseUsDate(m[4]);
+      if (!flightDate) continue;
+      const depClock = {h:Number(m[5]), min:Number(m[6]), minutes:Number(m[5])*60+Number(m[6])};
+      const arrClock = {h:Number(m[7]), min:Number(m[8]), minutes:Number(m[7])*60+Number(m[8])};
+      if (depClock.h>23 || depClock.min>59 || arrClock.h>23 || arrClock.min>59) continue;
+      const dep = atUtc(flightDate, depClock, 0);
+      const arr = atUtc(flightDate, arrClock, arrClock.minutes < depClock.minutes ? 1 : 0);
+      const key = `${flightNumber}|${isoDate(flightDate)}|${origin}|${destination}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
+        external_id:key,
+        flight_number:flightNumber,
+        flight_date:isoDate(flightDate),
+        origin,
+        destination,
+        deadhead:true,
+        scheduled_departure_utc:dep.toISOString(),
+        scheduled_arrival_utc:arr.toISOString()
+      });
+    }
+    if (!rows.length) {
+      throw new Error(onlyHub && hub
+        ? `No confirmed jumpseats touching ${hub} were found on this page.`
+        : 'No confirmed jumpseat rows were found on this page.');
+    }
+    rows.sort((a,b)=>a.scheduled_departure_utc.localeCompare(b.scheduled_departure_utc));
+    return {
+      schema_version:1,
+      source:'ups-edge-extension-jumpseat',
+      extension_version:extensionVersion,
+      captured_at:new Date().toISOString(),
+      hub_airport:hub || null,
+      complete_view:/Upcoming\s+Jumpseats\s+Standby/i.test(normalized) || /no\s+standby\s+jumpseats/i.test(normalized),
+      entries:rows
+    };
+  }
+
+  global.FlightlineUpsParser = { parseUpsTimeDetail, parseUpsTimeDetailOcr, parseUpsCalendar, useCalendarCoverage, parseJumpseatText };
 })(globalThis);

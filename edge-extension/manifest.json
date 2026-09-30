@@ -1,19 +1,24 @@
 {
   "manifest_version": 3,
-  "name": "Flightline Tracker UPS Schedule Sync",
-  "version": "2.0.0",
-  "description": "User-triggered UPS schedule sync: screen capture first, copied-text fallback if needed.",
+  "name": "Flightline Tracker UPS Sync",
+  "version": "3.0.0",
+  "description": "User-triggered UPS Work Schedule and confirmed jumpseat sync for Flightline Tracker.",
   "permissions": [
     "activeTab",
     "clipboardRead",
-    "storage"
+    "storage",
+    "tabs",
+    "notifications"
   ],
   "optional_host_permissions": [
     "http://*/*",
     "https://*/*"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
-    "default_title": "Flightline schedule sync",
+    "default_title": "Flightline UPS sync",
     "default_popup": "popup.html"
   },
   "icons": {

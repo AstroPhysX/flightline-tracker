@@ -1,0 +1,30 @@
+name: Package Edge extension
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'edge-extension/**'
+      - '.github/workflows/package-edge-extension.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read extension version
+        id: version
+        run: |
+          VERSION=$(python -c "import json; print(json.load(open('edge-extension/manifest.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Create Edge Add-ons ZIP
+        run: |
+          cd edge-extension
+          zip -r "../flightline-edge-extension-v${{ steps.version.outputs.version }}.zip" . -x '*.DS_Store'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flightline-edge-extension-v${{ steps.version.outputs.version }}
+          path: flightline-edge-extension-v${{ steps.version.outputs.version }}.zip

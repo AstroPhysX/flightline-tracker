@@ -727,7 +727,7 @@ function closestByTime(rows, targetMs, field, maxDiffMs=Infinity){
 function updateReplayWeather(iso){
   if(!iso)return;
   const targetMs=new Date(iso).getTime();
-  const archived=closestByTime(replayWeatherSnapshots,targetMs,'radar_time',45*60*1000);
+  const archived=closestByTime(replayWeatherSnapshots,targetMs,'radar_time',90*60*1000);
   if(archived){
     const key=`archive:${archived.file}`;
     if(replayWeatherKey!==key){
@@ -1263,10 +1263,49 @@ for (const cfg of [
   document.getElementById(ad)?.addEventListener('change',ev=>{ev.target.dataset.userEdited='1';});
 }
 
+// Mobile menu keeps the map uncluttered while leaving every action available.
+const mobileMenuButton=document.getElementById('mobile-menu-button');
+mobileMenuButton?.addEventListener('click',()=>document.body.classList.toggle('mobile-menu-open'));
+document.addEventListener('click',ev=>{
+  if(!document.body.classList.contains('mobile-menu-open')) return;
+  if(ev.target.closest('#mobile-menu-button') || ev.target.closest('.topbar nav')) return;
+  document.body.classList.remove('mobile-menu-open');
+});
+
+// Offer an in-app install button when Chromium exposes the PWA install prompt.
+let deferredInstallPrompt=null;
+const installButton=document.getElementById('pwa-install-button');
+window.addEventListener('beforeinstallprompt',ev=>{
+  ev.preventDefault();
+  deferredInstallPrompt=ev;
+  installButton?.classList.remove('hidden');
+});
+installButton?.addEventListener('click',async()=>{
+  if(!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  try{await deferredInstallPrompt.userChoice;}catch(_){ }
+  deferredInstallPrompt=null;
+  installButton.classList.add('hidden');
+});
+window.addEventListener('appinstalled',()=>{deferredInstallPrompt=null;installButton?.classList.add('hidden');});
+
 if ('serviceWorker' in navigator) {
   const localHosts=new Set(['127.0.0.1','localhost']);
-  if (localHosts.has(location.hostname)) navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(r=>r.unregister()));
-  else navigator.serviceWorker.register('/static/sw.js');
+  if (localHosts.has(location.hostname)) {
+    navigator.serviceWorker.getRegistrations().then(regs=>regs.forEach(r=>r.unregister()));
+  } else {
+    navigator.serviceWorker.getRegistrations().then(async regs=>{
+      // v26 and older registered /static/sw.js, whose scope was only /static/.
+      // Remove that obsolete registration so it cannot keep serving stale icons/assets.
+      for (const reg of regs) {
+        try {
+          const scopePath=new URL(reg.scope).pathname;
+          if (scopePath.endsWith('/static/')) await reg.unregister();
+        } catch (_) {}
+      }
+      await navigator.serviceWorker.register('/sw.js',{scope:'/'});
+    }).catch(()=>{});
+  }
 }
 
 sendViewerHeartbeat();

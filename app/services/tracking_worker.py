@@ -108,9 +108,9 @@ def _run_once_unlocked(*, force: bool = False, force_live_position: bool = False
                     db.refresh(refreshed)
                 if refreshed is not None and not refreshed.schedule_active:
                     continue
-                # Replay weather is deliberately tiny: exactly three local
-                # snapshots per flight (begin/middle/end). It is independent of
-                # viewer presence so replay still has context if nobody watched live.
+                # Replay weather stays deliberately small: five local snapshots
+                # on normal flights and up to seven on long-haul flights. It is
+                # independent of viewer presence so replay still has context if nobody watched live.
                 if refreshed and refreshed.actual_departure_utc:
                     archive_for_flight(refreshed)
                 if refreshed and refreshed.actual_arrival_utc and not refreshed.deadhead:

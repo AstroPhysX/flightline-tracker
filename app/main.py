@@ -17,12 +17,12 @@ from .config import settings
 from .db import Base, engine, get_db
 from .migrations import ensure_schema_extensions
 from .models import Airport, Flight, Trip, LogbookEntry
-from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdate, FlightScheduleUpdate, ScheduleRemoveRequest, ViewerHeartbeat, AdminLoginRequest, BrowserScheduleSync
+from .schemas import ManualTripCreate, ManualFlightCreate, TrackingSettingsUpdate, FlightScheduleUpdate, ScheduleRemoveRequest, ViewerHeartbeat, AdminLoginRequest, BrowserScheduleSync, BrowserJumpseatSync
 from .services.aeroapi import AeroApiError, test_connection as test_aeroapi_connection
 from .services.airport_resolver import ensure_airport
 from .services.dashboard import build_dashboard, select_trip
 from .services.schedule_service import resequence_trip, snapshot_awarded, mark_added_after_award, deactivate_from, clear_provider_tracking, discard_tracking_data, repair_legacy_schedule_state
-from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive, schedule_sync, schedule_ocr
+from .services import tracker_settings, tracking_worker, viewer_presence, admin_auth, weather_archive, schedule_sync, schedule_ocr, jumpseat_sync
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
 from .services.ups_pdf_import import import_awarded_line_pdfs
@@ -33,15 +33,15 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.6.0")
+app = FastAPI(title="Flightline Tracker", version="2.7.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
 @app.on_event("startup")
 def _start_tracking_worker():
     generated = admin_auth.ensure_admin_password()
-    # v20 keeps only three tiny replay-weather frames per flight. Collapse any
-    # older hourly archive once at startup before the background worker begins.
+    # v27 keeps a small, richer replay-weather archive (5 snapshots normally,
+    # up to 7 on long-haul flights) while preserving the global storage cap.
     weather_archive.prune_archive()
     if generated:
         print("\n" + "=" * 72)
@@ -74,9 +74,24 @@ templates = Jinja2Templates(directory=BASE_DIR / "templates")
 templates.env.globals["timing_summary"] = timing_summary
 
 
+@app.get("/sw.js", include_in_schema=False)
+def root_service_worker():
+    response = FileResponse(BASE_DIR / "static" / "sw.js", media_type="application/javascript")
+    response.headers["Service-Worker-Allowed"] = "/"
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def root_favicon():
+    response = FileResponse(BASE_DIR / "static" / "icons" / "favicon.ico", media_type="image/x-icon")
+    response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.6.0"}
+    return {"ok": True, "version": "2.7.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -194,6 +209,21 @@ async def ocr_ups_schedule_screenshot(
     # presses Sync. The screenshot is processed in memory and is not stored.
     raw = await screenshot.read()
     return schedule_ocr.ocr_schedule_screenshot(raw)
+
+
+@app.get("/api/integrations/ups-schedule/ping")
+def ups_schedule_sync_ping(_sync: None = Depends(schedule_sync.require_sync_token)):
+    return {"ok": True, "version": "2.7.0", "schedule_sync": True, "jumpseat_sync": True}
+
+
+@app.post("/api/integrations/ups-jumpseats")
+def receive_ups_jumpseat_sync(
+    req: BrowserJumpseatSync,
+    db: Session = Depends(get_db),
+    _sync: None = Depends(schedule_sync.require_sync_token),
+):
+    result = jumpseat_sync.apply_jumpseats(req.model_dump(mode="json"), db)
+    return {"ok": True, "apply": result, "message": "Confirmed jumpseats synchronized as deadheads."}
 
 
 @app.post("/api/integrations/ups-schedule")

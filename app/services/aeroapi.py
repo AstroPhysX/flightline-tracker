@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
+import re
 
 import httpx
 from sqlalchemy.orm import Session
@@ -157,6 +158,20 @@ def get_account_usage(api_key: str, *, start: datetime | None = None, end: datet
     )
 
 
+def _provider_ident(flight_number: str) -> str:
+    """Return the provider designator without UPS display-only zero padding.
+
+    UPS internal/jumpseat pages can show identifiers such as UPS0751 while
+    FlightAware publishes the same operation as UPS751. Keep the display value
+    in our database, but query AeroAPI with the canonical provider ident.
+    """
+    value = str(flight_number or "").upper().strip().replace(" ", "")
+    m = re.fullmatch(r"UPS0+(\d+)", value)
+    if m:
+        return f"UPS{int(m.group(1))}"
+    return value
+
+
 def lookup_flight_info(api_key: str, flight: Flight, monthly_budget_usd: float) -> dict | None:
     if not usage_ledger.can_spend("aeroapi", monthly_budget_usd, FLIGHT_INFO_COST):
         raise AeroApiError("Local AeroAPI monthly budget guard reached.")
@@ -173,7 +188,7 @@ def lookup_flight_info(api_key: str, flight: Flight, monthly_budget_usd: float) 
     # it narrow enough that a repeated daily flight number returns few records.
     payload = _request(
         api_key,
-        f"/flights/{quote(flight.flight_number, safe='')}",
+        f"/flights/{quote(_provider_ident(flight.flight_number), safe='')}",
         params={
             "ident_type": "designator",
             "start": start.isoformat().replace("+00:00", "Z"),
