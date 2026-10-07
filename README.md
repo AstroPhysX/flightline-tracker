@@ -1,6 +1,6 @@
 # Flightline Tracker
 
-**v29** focuses on mobile/PWA polish, a date-by-date Actual-vs-Initial history comparison, and more reliable user-triggered UPS schedule synchronization.
+**v30** focuses on mobile/PWA polish, a date-by-date Actual-vs-Initial history comparison, and more reliable user-triggered UPS schedule synchronization.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
@@ -24,7 +24,7 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - GitHub → GHCR → Watchtower deployment support
 - User-triggered Edge extension for UPS Work Schedule and confirmed jumpseat sync
 
-## v29 status and display changes
+## v30 status and display changes
 
 - Takeoff/landing symbols are larger and clearer on desktop and mobile.
 - Dallas/local clock values stay clean (no `CDT`, `CST`, or `UTC(+5)` suffixes), while labels keep their location context.
@@ -35,7 +35,7 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - The local-clock display name remains editable in **Tracker settings** (for example Jerome → Jerry).
 - The compact Next Flight card now uses the layout: heading, Dallas date/time, flight + FR24 + route/destination city, and estimated flight time.
 
-## v29 history comparison
+## v30 history comparison
 
 The main History view remains a vertical date timeline with parallel **Actual / Current** and **Initial Schedule** lanes, but flights belonging to the same trip are now visually grouped inside a light green trip band with a vertical **Trip / Pair** label. The repetitive full trip name is no longer printed on every individual flight card.
 
@@ -50,7 +50,7 @@ When Admin mode is unlocked, History now supports granular cleanup:
 
 Removing an Actual / Current history item also discards its saved provider track, tracker-generated logbook copy, and archived weather for that flight.
 
-## v29 UPS Work Schedule sync
+## v30 UPS Work Schedule sync
 
 The Edge extension lives in the separate `edge-extension/` directory. The popup is intentionally small and settings remain behind ⚙.
 
@@ -138,7 +138,7 @@ Typical update:
 
 ```bash
 git add -A
-git commit -m "Flightline Tracker v29"
+git commit -m "Flightline Tracker v30"
 git push origin main
 ```
 

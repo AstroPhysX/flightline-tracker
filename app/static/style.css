@@ -434,7 +434,8 @@ body.map-only .weather-credit { bottom:12px; }
 .status-main-row { gap:8px; }
 .flying-state { font-weight:900; letter-spacing:.015em; }
 .flying-flight { display:inline; }
-.metric-plane-icon { font-size:12px; line-height:1; vertical-align:-1px; margin-right:2px; }
+.metric-plane-icon { display:inline-flex; align-items:center; justify-content:center; min-width:28px; width:28px; height:20px; margin-right:5px; vertical-align:-3px; }
+.metric-plane-icon img, .metric-plane-icon svg { width:28px; height:20px; display:block; }
 .delay-metric { display:inline-flex; align-items:center; gap:6px; }
 .delay-metric::before { content:''; width:8px; height:8px; border-radius:50%; background:#75808d; box-shadow:0 0 0 2px rgba(117,128,141,.12); flex:0 0 auto; }
 .delay-metric.timing-delayed::before { background:#ff655f; box-shadow:0 0 0 2px rgba(255,101,95,.14); }
@@ -526,13 +527,14 @@ body.map-only .weather-credit { bottom:12px; }
   display:inline-flex;
   align-items:center;
   justify-content:center;
-  min-width:22px;
-  font-size:20px;
-  line-height:1;
+  min-width:34px;
+  width:34px;
+  height:24px;
   vertical-align:-3px;
-  margin-right:4px;
-  filter:saturate(1.15) contrast(1.08);
+  margin-right:6px;
+  filter:saturate(1.05) contrast(1.08);
 }
+.metric-plane-icon img { width:34px; height:24px; object-fit:contain; display:block; }
 .metrics-grid > div > span:first-child { display:flex; align-items:center; gap:2px; }
 .next-flight-card { gap:3px; }
 .next-flight-card .status-next-heading { font-size:11px; margin:0 0 1px; }
@@ -542,7 +544,8 @@ body.map-only .weather-credit { bottom:12px; }
 .clock-name-setting { margin-bottom:8px; padding:9px 10px; border:1px solid var(--soft-border); border-radius:10px; background:var(--surface-2); }
 
 @media (max-width:760px) {
-  .metric-plane-icon { min-width:19px; font-size:17px; margin-right:2px; vertical-align:-2px; }
+  .metric-plane-icon { min-width:28px; width:28px; height:20px; margin-right:4px; vertical-align:-2px; }
+  .metric-plane-icon img { width:28px; height:20px; }
   .next-flight-card .status-next-heading { font-size:10px; }
   .next-flight-when { font-size:10px; }
   .next-flight-reference { display:block; font-size:9px; }
@@ -553,6 +556,23 @@ body.map-only .weather-credit { bottom:12px; }
 .history-day { z-index:1; }
 .history-day-lane { position:relative; z-index:2; }
 .history-leg-card { position:relative; z-index:2; margin-left:15px; }
+.history-schedule-band {
+  position:absolute; z-index:-1; pointer-events:none;
+  border:1px solid rgba(112,148,255,.20);
+  border-radius:16px;
+  background:rgba(90,120,215,.055);
+  box-shadow:inset 0 0 0 1px rgba(90,120,215,.03);
+}
+.history-schedule-band.initial-schedule-band {
+  background:rgba(90,120,215,.04);
+  border-style:dashed;
+}
+.history-schedule-band-label {
+  position:absolute; left:10px; right:10px; top:6px;
+  color:#a9bcff; font-size:10px; font-weight:900; letter-spacing:.03em;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  text-transform:none;
+}
 .history-trip-band {
   position:absolute; z-index:0; pointer-events:none;
   border:1px solid rgba(86,196,126,.28);
@@ -562,12 +582,14 @@ body.map-only .weather-credit { bottom:12px; }
 }
 .history-trip-band.initial-band { background:rgba(72,166,112,.055); border-style:dashed; }
 .history-trip-band-label {
-  position:absolute; left:2px; top:6px; bottom:6px; width:12px;
+  position:absolute; top:6px; bottom:6px; width:12px;
   display:flex; align-items:center; justify-content:center;
-  writing-mode:vertical-rl; transform:rotate(180deg);
+  writing-mode:vertical-rl;
   color:#71d99a; font-size:8px; font-weight:900; letter-spacing:.045em;
   overflow:hidden; white-space:nowrap; text-overflow:ellipsis;
 }
+.history-trip-band.actual-band .history-trip-band-label { left:2px; transform:rotate(180deg); }
+.history-trip-band.initial-band .history-trip-band-label { right:2px; transform:none; }
 .history-flight-type { font-weight:900; }
 .history-flight-type[data-type="deadhead"] { color:#ff9e4a; }
 .history-flight-type[data-type="operating"] { color:#55d88b; }
@@ -584,7 +606,10 @@ body.map-only .weather-credit { bottom:12px; }
 }
 @media (max-width:760px) {
   .history-leg-card { margin-left:9px; }
-  .history-trip-band-label { width:8px; left:1px; font-size:6px; }
+  .history-schedule-band-label { left:8px; right:8px; top:5px; font-size:8px; }
+  .history-trip-band-label { width:8px; font-size:6px; }
+  .history-trip-band.actual-band .history-trip-band-label { left:1px; }
+  .history-trip-band.initial-band .history-trip-band-label { right:1px; }
   .history-delete-flight { width:20px; height:20px; min-width:20px; font-size:14px; }
   .history-delete-day { padding:3px 4px; font-size:9px; }
 }

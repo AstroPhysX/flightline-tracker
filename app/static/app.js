@@ -533,7 +533,7 @@ function drawDashboard(data) {
 function fmtDallas(iso) {
   if (!iso) return '—';
   return new Intl.DateTimeFormat(currentLocale(),{
-    timeZone:'America/Chicago', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false
+    timeZone:'America/Chicago', month:'short', day:'numeric', hour:'numeric', minute:'2-digit', hour12:false
   }).format(new Date(iso));
 }
 
@@ -571,7 +571,8 @@ function setMetricLabels(primaryKey, secondaryKey) {
   const b=document.getElementById('secondary-time-label');
   const htmlFor=(key)=>{
     const landing=/landing|landed/i.test(key);
-    return `<span class="metric-plane-icon" aria-hidden="true">${landing?'🛬':'🛫'}</span> <span>${escapeHtml(t(key))}</span>`;
+    const icon=landing?'/static/icons/icon-landing.svg?v=30':'/static/icons/icon-takeoff.svg?v=30';
+    return `<span class="metric-plane-icon" aria-hidden="true"><img src="${icon}" alt=""></span> <span>${escapeHtml(t(key))}</span>`;
   };
   if(a) a.innerHTML=htmlFor(primaryKey);
   if(b) b.innerHTML=htmlFor(secondaryKey);

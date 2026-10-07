@@ -27,3 +27,9 @@
 - Complete-coverage UPS sync safeguards.
 - User-triggered one-click Ctrl+A/C copy path in Edge extension v4, with OCR/manual fallback.
 - Up to five weather snapshots on normal flights and seven on long-haul flights.
+
+
+Additional v30 refinements:
+- Larger, clearer takeoff/landing SVG icons.
+- History timeline now groups trips inside larger schedule-group bands (e.g. BP 2606 · Line 18).
+- Actual/Current vertical trip labels are on the left; Initial Schedule labels are on the right.
