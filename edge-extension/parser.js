@@ -146,6 +146,7 @@
       pay_period_end: isoDate(ppEnd),
       coverage_start_date: captureStart,
       coverage_end_date: captureEnd,
+      coverage_complete: false,
       fleet,
       seat,
       domicile,
@@ -289,6 +290,7 @@
       pay_period_end: isoDate(ppEnd),
       coverage_start_date: flights[0].flight_date,
       coverage_end_date: isoDate(ppEnd),
+      coverage_complete: false,
       fleet,
       seat,
       domicile,
@@ -373,7 +375,8 @@
         pay_period_start: calendar.pay_period_start,
         pay_period_end: calendar.pay_period_end,
         coverage_start_date: calendar.pay_period_start,
-        coverage_end_date: calendar.pay_period_end
+        coverage_end_date: calendar.pay_period_end,
+        coverage_complete: true
       },
       complete: true,
       missing: []

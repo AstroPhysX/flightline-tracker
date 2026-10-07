@@ -29,6 +29,7 @@
       <label for="jumpseat-airport">Jumpseat home airport</label>
       <input id="jumpseat-airport" maxlength="4" value="DFW" placeholder="DFW">
       <label class="check"><input id="jumpseat-only-home" type="checkbox" checked> Only import confirmed jumpseats touching this airport</label>
+      <label class="check"><input id="auto-text-capture" type="checkbox" checked> One-click text capture (automatic Ctrl+A / Ctrl+C after I press Sync)</label>
 
       <div class="row">
         <button id="save" type="button" class="secondary">Save settings</button>
@@ -36,7 +37,7 @@
       </div>
       <details>
         <summary>Safety / privacy</summary>
-        <p>Nothing is clicked, searched, booked, cancelled, or polled on UPS. The extension reads the current visible page only after you press Sync. If screen reading is uncertain it asks for Ctrl+A / Ctrl+C as a fallback.</p>
+        <p>Nothing is searched, booked, cancelled, or polled on UPS. If one-click text capture is enabled, pressing Sync briefly sends Ctrl+A / Ctrl+C to the current supported page, reads the copied text, then detaches immediately. It never runs in the background. Screen OCR and manual copy remain fallbacks.</p>
       </details>
     </section>
   </main>

@@ -45,11 +45,12 @@ async function activeSupportedTab(){
 }
 
 async function loadSettings(){
-  const d=await chrome.storage.local.get(['trackerUrl','syncToken','jumpseatAirport','jumpseatOnlyHome','clipboardFallback','calendarSnapshot']);
+  const d=await chrome.storage.local.get(['trackerUrl','syncToken','jumpseatAirport','jumpseatOnlyHome','autoTextCapture','clipboardFallback','calendarSnapshot']);
   $('tracker-url').value=d.trackerUrl||'';
   $('sync-token').value=d.syncToken||'';
   $('jumpseat-airport').value=d.jumpseatAirport||'DFW';
   $('jumpseat-only-home').checked=d.jumpseatOnlyHome!==false;
+  $('auto-text-capture').checked=d.autoTextCapture!==false;
 
   let detected=null;
   try{detected=await activeSupportedTab();}catch(_){ }
@@ -81,9 +82,10 @@ async function saveSettings({quiet=false}={}){
   const granted=await chrome.permissions.request({origins:[pattern]});
   if(!granted) throw new Error(`Edge permission for ${new URL(trackerUrl).origin} was not granted.`);
   const jumpseatOnlyHome=$('jumpseat-only-home').checked;
-  await chrome.storage.local.set({trackerUrl,syncToken,jumpseatAirport,jumpseatOnlyHome});
+  const autoTextCapture=$('auto-text-capture').checked;
+  await chrome.storage.local.set({trackerUrl,syncToken,jumpseatAirport,jumpseatOnlyHome,autoTextCapture});
   if(!quiet) setStatus('Settings saved.', 'ok');
-  return {trackerUrl,syncToken,jumpseatAirport,jumpseatOnlyHome};
+  return {trackerUrl,syncToken,jumpseatAirport,jumpseatOnlyHome,autoTextCapture};
 }
 
 async function requestFallback(tab, kind, reason){
@@ -112,7 +114,7 @@ async function postJson(url,payload,token){
 }
 
 function countSchedule(payload){return (payload.trips||[]).reduce((n,t)=>n+(t.flights||[]).length,0);}
-function scheduleSuccess(payload,result,method){const a=result.apply||{};setStatus(`${method}: ${countSchedule(payload)} flights · ${a.added||0} added · ${a.updated||0} updated · ${a.removed||0} removed.`, 'ok');}
+function scheduleSuccess(payload,result,method){const a=result.apply||{};const past=Number(a.removed_history||0);setStatus(`${method}: ${countSchedule(payload)} flights · ${a.added||0} added · ${a.updated||0} updated · ${a.removed||0} removed${past?` (${past} historical)`:''}.`, 'ok');}
 function jumpseatSuccess(payload,result,method){const a=result.apply||{};setStatus(`${method}: ${payload.entries.length} confirmed jumpseat(s) · ${a.added||0} added · ${a.updated||0} updated · ${a.removed||0} removed.`, 'ok');}
 
 async function syncScreen(tab,kind){
@@ -123,14 +125,25 @@ async function syncScreen(tab,kind){
 
   if(kind==='schedule'){
     if(ocr.page_type==='calendar'){
-      await clearFallback();
-      setStatus('Work Schedule calendar detected. Open Time Detail from the first scheduled entry, then press Sync again.', 'ok');
+      try{
+        const calendar=FlightlineUpsParser.parseUpsCalendar(ocr.text||'');
+        await chrome.storage.local.set({calendarSnapshot:calendar});
+        await clearFallback();
+        const first=calendar.entries.map(e=>e.flight_date).sort()[0];
+        setStatus(`Calendar captured. Open Time Detail from the first scheduled entry (${first}), then press Sync again.`, 'ok');
+      }catch(e){await requestFallback(tab,kind,e?.message||String(e));}
       return;
     }
     if(ocr.page_type!=='time_detail'||Number(ocr.quality_score||0)<16){await requestFallback(tab,kind,'the capture did not contain a clear Time Detail table');return;}
     if(!ocr.complete_view){await requestFallback(tab,kind,'the complete Time Detail table is not visible in one capture');return;}
     try{
-      const payload=FlightlineUpsParser.parseUpsTimeDetailOcr(ocr.text||'',chrome.runtime.getManifest().version);payload.page_url=null;
+      let payload=FlightlineUpsParser.parseUpsTimeDetailOcr(ocr.text||'',chrome.runtime.getManifest().version);payload.page_url=null;
+      const stored=await chrome.storage.local.get('calendarSnapshot');
+      if(stored.calendarSnapshot){
+        const merged=FlightlineUpsParser.useCalendarCoverage(payload,stored.calendarSnapshot);
+        if(merged.missing.length) throw new Error(`Time Detail is incomplete; ${merged.missing.length} calendar flight(s) are missing.`);
+        payload=merged.payload;
+      }
       const result=await postJson(`${cfg.trackerUrl}/api/integrations/ups-schedule`,payload,cfg.syncToken);
       await chrome.storage.local.remove('calendarSnapshot');await clearFallback();scheduleSuccess(payload,result,'Screen capture');
     }catch(e){await requestFallback(tab,kind,e?.message||String(e));}
@@ -145,31 +158,56 @@ async function syncScreen(tab,kind){
   }catch(e){await requestFallback(tab,kind,e?.message||String(e));}
 }
 
-async function syncClipboard(tab,kind){
-  const cfg=await saveSettings({quiet:true});
-  let text='';
-  try{text=await navigator.clipboard.readText();}catch(_){throw new Error('Edge could not read the clipboard. Press Ctrl+A and Ctrl+C on the UPS page, then try again.');}
-
+async function syncTextValue(text,tab,kind,cfg,method){
   if(kind==='jumpseat'){
     const payload=FlightlineUpsParser.parseJumpseatText(text,chrome.runtime.getManifest().version,{hubAirport:cfg.jumpseatAirport,onlyHub:cfg.jumpseatOnlyHome});
     const result=await postJson(`${cfg.trackerUrl}/api/integrations/ups-jumpseats`,payload,cfg.syncToken);
-    await clearFallback();jumpseatSuccess(payload,result,'Copied text');return;
+    await clearFallback();jumpseatSuccess(payload,result,method);return true;
   }
 
   if(/UNOFFICIAL SCHEDULE/i.test(text)&&!/\bTime Detail\b/i.test(text)){
     const calendar=FlightlineUpsParser.parseUpsCalendar(text);await chrome.storage.local.set({calendarSnapshot:calendar});await clearFallback();
-    const first=calendar.entries.map(e=>e.flight_date).sort()[0];setStatus(`Calendar captured. Open Time Detail from the first scheduled entry (${first}), copy it, then Sync again.`, 'ok');return;
+    const first=calendar.entries.map(e=>e.flight_date).sort()[0];setStatus(`Calendar captured. Open Time Detail from the first scheduled entry (${first}), then press Sync again.`, 'ok');return true;
   }
   let payload=FlightlineUpsParser.parseUpsTimeDetail(text,chrome.runtime.getManifest().version);payload.page_url=null;
   const stored=await chrome.storage.local.get('calendarSnapshot');
-  if(stored.calendarSnapshot){const merged=FlightlineUpsParser.useCalendarCoverage(payload,stored.calendarSnapshot);if(merged.missing.length)throw new Error(`Copied Time Detail is incomplete; ${merged.missing.length} calendar flight(s) are missing.`);payload=merged.payload;}
+  if(stored.calendarSnapshot){
+    const merged=FlightlineUpsParser.useCalendarCoverage(payload,stored.calendarSnapshot);
+    if(merged.missing.length)throw new Error(`Time Detail is incomplete; ${merged.missing.length} calendar flight(s) are missing.`);
+    payload=merged.payload;
+  }
   const result=await postJson(`${cfg.trackerUrl}/api/integrations/ups-schedule`,payload,cfg.syncToken);
-  await chrome.storage.local.remove(['calendarSnapshot','clipboardFallback']);scheduleSuccess(payload,result,'Copied text');
+  await chrome.storage.local.remove(['calendarSnapshot','clipboardFallback']);scheduleSuccess(payload,result,method);return true;
+}
+
+async function syncClipboard(tab,kind){
+  const cfg=await saveSettings({quiet:true});
+  let text='';
+  try{text=await navigator.clipboard.readText();}catch(_){throw new Error('Edge could not read the clipboard. Press Ctrl+A and Ctrl+C on the UPS page, then try again.');}
+  return syncTextValue(text,tab,kind,cfg,'Copied text');
+}
+
+async function syncAutoText(tab,kind,cfg){
+  setStatus('Reading UPS text…');
+  const result=await chrome.runtime.sendMessage({action:'copy-active-page-text',tabId:tab.id});
+  if(!result?.ok) throw new Error(result?.error||'Edge could not automate the copy operation.');
+  await new Promise(resolve=>setTimeout(resolve,120));
+  const text=await navigator.clipboard.readText();
+  if(!text || text.length<80) throw new Error('The automatic copy did not return enough page text.');
+  return syncTextValue(text,tab,kind,cfg,'One-click text');
 }
 
 async function sync(){
   syncButton.disabled=true;saveButton.disabled=true;testButton.disabled=true;
-  try{const {tab,kind}=await activeSupportedTab();if(await fallbackFor(tab,kind))await syncClipboard(tab,kind);else await syncScreen(tab,kind);}catch(e){setStatus(e?.message||String(e),'error');}
+  try{
+    const {tab,kind}=await activeSupportedTab();
+    if(await fallbackFor(tab,kind)){await syncClipboard(tab,kind);return;}
+    const cfg=await saveSettings({quiet:true});
+    if(cfg.autoTextCapture){
+      try{await syncAutoText(tab,kind,cfg);return;}catch(e){setStatus(`One-click text capture was unavailable (${e?.message||e}). Trying screen reading…`,'warn');}
+    }
+    await syncScreen(tab,kind);
+  }catch(e){setStatus(e?.message||String(e),'error');}
   finally{syncButton.disabled=false;saveButton.disabled=false;testButton.disabled=false;}
 }
 

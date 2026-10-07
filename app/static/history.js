@@ -63,8 +63,7 @@ deleteButton?.addEventListener('click',async()=>{
     if(res.status===401){window.TrackerAdmin.handleUnauthorized(res);return;}
     if(!res.ok){const data=await res.json();throw new Error(data.detail || 'Delete failed');}
     dialog.close();
-    pendingCard?.remove();
-    if(!document.querySelector('.history-card')) location.reload();
+    location.reload();
   }catch(err){
     message.textContent=err.message;
   }finally{deleteButton.disabled=false;}

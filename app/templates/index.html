@@ -9,16 +9,16 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Flightline">
-  <link rel="shortcut icon" href="/favicon.ico?v=27">
-  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png?v=27">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=27">
-  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=27">
+  <link rel="shortcut icon" href="/favicon.ico?v=28">
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png?v=28">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=28">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=28">
   <title data-i18n="app_title">Flightline Tracker</title>
-  <link rel="manifest" href="/static/manifest.webmanifest?v=27">
-  <script src="/static/theme.js?v=27"></script>
+  <link rel="manifest" href="/static/manifest.webmanifest?v=28">
+  <script src="/static/theme.js?v=28"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/static/style.css?v=27">
+  <link rel="stylesheet" href="/static/style.css?v=28">
 </head>
 <body>
   <div id="map"></div>
@@ -50,15 +50,16 @@
     </div>
     <div id="flight-card" class="flight-card">
       <div class="eyebrow" data-i18n="status">STATUS</div>
-      <div class="status-main-row"><div id="status-main" class="status-main" data-i18n="waiting_trip">Waiting for trip</div><span id="status-timing-badge" class="timing-badge hidden"></span></div>
+      <div class="status-main-row"><div id="status-main" class="status-main" data-i18n="waiting_trip">Waiting for trip</div></div>
       <div id="status-detail" class="muted"></div>
     </div>
     <div class="metrics-grid">
-      <div><span id="primary-time-label" data-i18n="takeoff_dallas">Takeoff · Dallas time</span><strong id="takeoff-dallas">—</strong></div>
-      <div><span id="secondary-time-label" data-i18n="landing_dallas">Landing · Dallas time</span><strong id="landing-dallas">—</strong></div>
-      <div><span data-i18n="delay">Delay</span><strong id="delay">—</strong></div>
-      <div><span data-i18n="rest_timer">Rest timer</span><strong id="rest-timer">—</strong></div>
+      <div><span id="primary-time-label"><span class="metric-plane-icon" aria-hidden="true">🛫</span> <span data-i18n="takeoff_dallas">Takeoff</span></span><strong id="takeoff-dallas">—</strong></div>
+      <div><span id="secondary-time-label"><span class="metric-plane-icon" aria-hidden="true">🛬</span> <span data-i18n="landing_dallas">Landing</span></span><strong id="landing-dallas">—</strong></div>
+      <div><span data-i18n="delay">Delay / ahead</span><strong id="delay" class="delay-metric timing-unknown">—</strong></div>
+      <div><span data-i18n="rest_timer">Next flight in</span><strong id="rest-timer">—</strong></div>
     </div>
+    <div id="next-flight-card" class="next-flight-card hidden"></div>
   </section>
 
   <section class="legend glass">
@@ -168,8 +169,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
-  <script src="/static/i18n.js?v=27"></script>
-  <script src="/static/admin.js?v=27"></script>
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/i18n.js?v=28"></script>
+  <script src="/static/admin.js?v=28"></script>
+  <script src="/static/app.js?v=28"></script>
 </body>
 </html>

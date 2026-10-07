@@ -270,7 +270,7 @@ def delete_flight_weather(flight_id: int) -> None:
 
 
 def prune_archive() -> dict:
-    """Best-effort cleanup while preserving the richer v27 replay archive."""
+    """Best-effort cleanup while preserving the richer v28 replay archive."""
     root = _root()
     removed_files = 0
     kept_files = 0

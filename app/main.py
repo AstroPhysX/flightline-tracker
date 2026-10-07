@@ -33,14 +33,14 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.7.0")
+app = FastAPI(title="Flightline Tracker", version="2.8.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
 @app.on_event("startup")
 def _start_tracking_worker():
     generated = admin_auth.ensure_admin_password()
-    # v27 keeps a small, richer replay-weather archive (5 snapshots normally,
+    # v28 keeps a small, richer replay-weather archive (5 snapshots normally,
     # up to 7 on long-haul flights) while preserving the global storage cap.
     weather_archive.prune_archive()
     if generated:
@@ -91,7 +91,7 @@ def root_favicon():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.7.0"}
+    return {"ok": True, "version": "2.8.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -117,11 +117,69 @@ def history(request: Request, db: Session = Depends(get_db)):
         "count": int(count or 0), "hours": round(float(hours or 0.0), 1),
         "first_date": first_date, "last_date": last_date,
     }
-    codes = {code for trip in trips for f in trip.flights for code in (f.origin, f.destination) if code}
+
+    all_flights = [f for trip in trips for f in trip.flights]
+    codes = set()
+    for f in all_flights:
+        for code in (f.origin, f.destination, f.awarded_origin, f.awarded_destination):
+            if code:
+                codes.add(code)
     airport_map = {a.code: a for a in db.query(Airport).filter(Airport.code.in_(codes)).all()} if codes else {}
+
+    def airport_label(code: str | None) -> str:
+        if not code:
+            return "—"
+        ap = airport_map.get(code)
+        if ap and (ap.city or ap.name):
+            return f"{code} ({ap.city or ap.name})"
+        return code
+
+    actual_by_date: dict[date, list[dict]] = {}
+    awarded_by_date: dict[date, list[dict]] = {}
+
+    for trip in trips:
+        for f in trip.flights:
+            if f.schedule_active:
+                timing = timing_summary(f)
+                actual_by_date.setdefault(f.flight_date, []).append({
+                    "id": f.id, "trip_id": trip.id, "trip_name": trip.name,
+                    "flight_number": f.flight_number, "origin": f.origin, "destination": f.destination,
+                    "origin_label": airport_label(f.origin), "destination_label": airport_label(f.destination),
+                    "deadhead": bool(f.deadhead), "status": f.status, "timing": timing,
+                    "scheduled_departure_utc": f.scheduled_departure_utc, "scheduled_arrival_utc": f.scheduled_arrival_utc,
+                    "map_url": f"/?trip_id={trip.id}",
+                })
+
+            if f.awarded_flight_number and f.awarded_flight_date:
+                awarded_by_date.setdefault(f.awarded_flight_date, []).append({
+                    "id": f.id, "trip_id": trip.id, "trip_name": trip.name,
+                    "flight_number": f.awarded_flight_number,
+                    "origin": f.awarded_origin or f.origin, "destination": f.awarded_destination or f.destination,
+                    "origin_label": airport_label(f.awarded_origin or f.origin),
+                    "destination_label": airport_label(f.awarded_destination or f.destination),
+                    "deadhead": bool(f.awarded_deadhead), "status": "initial",
+                    "scheduled_departure_utc": f.awarded_scheduled_departure_utc,
+                    "scheduled_arrival_utc": f.awarded_scheduled_arrival_utc,
+                    "map_url": f"/?trip_id={trip.id}&view=awarded",
+                })
+
+    def leg_sort(row: dict):
+        return (row.get("scheduled_departure_utc") or datetime.min.replace(tzinfo=timezone.utc), row.get("flight_number") or "")
+
+    history_days = []
+    for day in sorted(set(actual_by_date) | set(awarded_by_date), reverse=True):
+        history_days.append({
+            "date": day,
+            "actual": sorted(actual_by_date.get(day, []), key=leg_sort),
+            "awarded": sorted(awarded_by_date.get(day, []), key=leg_sort),
+        })
+
     return templates.TemplateResponse(
         request=request, name="history.html",
-        context={"trips": trips, "logbook_summary": logbook_summary, "airport_map": airport_map},
+        context={
+            "trips": trips, "history_days": history_days,
+            "logbook_summary": logbook_summary, "airport_map": airport_map,
+        },
     )
 
 
@@ -213,7 +271,7 @@ async def ocr_ups_schedule_screenshot(
 
 @app.get("/api/integrations/ups-schedule/ping")
 def ups_schedule_sync_ping(_sync: None = Depends(schedule_sync.require_sync_token)):
-    return {"ok": True, "version": "2.7.0", "schedule_sync": True, "jumpseat_sync": True}
+    return {"ok": True, "version": "2.8.0", "schedule_sync": True, "jumpseat_sync": True}
 
 
 @app.post("/api/integrations/ups-jumpseats")

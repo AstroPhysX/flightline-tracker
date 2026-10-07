@@ -121,9 +121,24 @@
     times_flown:'Количество полётов', total_route_time:'Общее время по маршруту', average_flight_time:'Среднее время полёта', direction_breakdown:'По направлениям', aircraft_breakdown:'Типы самолётов', registration_breakdown:'Регистрации', average_time_estimated:'* Оценка для записей Logbook Pro с несколькими участками и одной общей продолжительностью.', map_only:'Только карта', show_ui:'Показать интерфейс', aircraft_types_selected:'Выбрано типов самолётов: {count}', visits:'Посещения', flights_touching_airport:'Полёты через аэропорт', departures:'Вылеты', arrivals:'Прилёты', logged_hours:'Налёт', first_visit:'Первое посещение', last_visit:'Последнее посещение', top_connections:'Основные направления', on_ground_at:'На земле в {place}', due_now:'Время вылета', scheduled_flight_time:'Плановое время полёта', typical_flight_time:'Обычное время по журналу', estimated_flight_time:'Расчётное время полёта', typical_short:'~{time} обычно', estimated_short:'~{time} расчётно', airport_aliases:'Также обозначается', suspicious_hidden:'С карты скрыто подозрительных исторических маршрутов: {count}', replay_weather_archived:'Архивный радар · {time}', replay_weather_recent:'Радар RainViewer · {time}', replay_weather_unavailable:'Исторический радар для этого времени повтора недоступен'
   });
 
-  Object.assign(dictionaries.en, {install_app:'Install app'});
-  Object.assign(dictionaries.fr, {install_app:"Installer l’application"});
-  Object.assign(dictionaries.ru, {install_app:'Установить приложение'});
+  Object.assign(dictionaries.en, {
+    install_app:'Install app', flying:'Flying…',
+    takeoff_dallas:'Takeoff', landing_dallas:'Landing', last_landing_dallas:'Last landing', next_takeoff_dallas:'Next takeoff', expected_landing_dallas:'Expected landing', landed_dallas:'Landed',
+    history_compare:'Schedule comparison', actual_current:'ACTUAL / CURRENT', initial_schedule:'INITIAL SCHEDULE', initially_scheduled:'Initially scheduled', no_flight_this_day:'—', saved_trip_tools:'Saved trip tools', saved_trip_tools_hint:'Trip-level maps and delete controls are kept here so the main history stays focused on what changed by date.',
+    map_data_credit:'Map data', weather_data_credit:'Weather data'
+  });
+  Object.assign(dictionaries.fr, {
+    install_app:"Installer l’application", flying:'En vol…',
+    takeoff_dallas:'Décollage', landing_dallas:'Atterrissage', last_landing_dallas:'Dernier atterrissage', next_takeoff_dallas:'Prochain décollage', expected_landing_dallas:'Atterrissage prévu', landed_dallas:'Atterri',
+    history_compare:'Comparaison du programme', actual_current:'RÉEL / ACTUEL', initial_schedule:'PROGRAMME INITIAL', initially_scheduled:'Prévu initialement', no_flight_this_day:'—', saved_trip_tools:'Outils des voyages enregistrés', saved_trip_tools_hint:'Les cartes par voyage et les commandes de suppression restent ici afin que l’historique principal reste centré sur les changements par date.',
+    map_data_credit:'Données cartographiques', weather_data_credit:'Données météo'
+  });
+  Object.assign(dictionaries.ru, {
+    install_app:'Установить приложение', flying:'В полёте…',
+    takeoff_dallas:'Взлёт', landing_dallas:'Посадка', last_landing_dallas:'Последняя посадка', next_takeoff_dallas:'Следующий взлёт', expected_landing_dallas:'Ожидаемая посадка', landed_dallas:'Посадка',
+    history_compare:'Сравнение расписаний', actual_current:'ФАКТ / ТЕКУЩЕЕ', initial_schedule:'ИСХОДНОЕ РАСПИСАНИЕ', initially_scheduled:'Изначально запланировано', no_flight_this_day:'—', saved_trip_tools:'Инструменты сохранённых рейсов', saved_trip_tools_hint:'Карты по поездкам и удаление сохранены здесь, чтобы основной архив показывал изменения по датам.',
+    map_data_credit:'Данные карты', weather_data_credit:'Погодные данные'
+  });
 
   const supported=['en','fr','ru'];
   let stored=localStorage.getItem(STORAGE_KEY);

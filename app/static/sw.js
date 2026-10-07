@@ -1,18 +1,20 @@
-const CACHE='flightline-tracker-v27';
+const CACHE='flightline-tracker-v28';
 const CORE=[
   '/', '/history', '/logbook',
-  '/static/style.css?v=27',
-  '/static/i18n.js?v=27',
-  '/static/admin.js?v=27',
-  '/static/app.js?v=27',
-  '/static/history.js?v=27',
-  '/static/logbook.js?v=27',
-  '/static/theme.js?v=27',
-  '/static/icons/favicon-32.png?v=27',
-  '/static/icons/favicon-64.png?v=27',
-  '/static/icons/apple-touch-icon.png?v=27',
-  '/static/icons/icon-192.png?v=27',
-  '/static/icons/icon-512.png?v=27'
+  '/static/style.css?v=28',
+  '/static/i18n.js?v=28',
+  '/static/admin.js?v=28',
+  '/static/app.js?v=28',
+  '/static/history.js?v=28',
+  '/static/logbook.js?v=28',
+  '/static/theme.js?v=28',
+  '/static/icons/favicon-32.png?v=28',
+  '/static/icons/favicon-64.png?v=28',
+  '/static/icons/apple-touch-icon.png?v=28',
+  '/static/icons/icon-192.png?v=28',
+  '/static/icons/icon-512.png?v=28',
+  '/static/icons/icon-maskable-192.png?v=28',
+  '/static/icons/icon-maskable-512.png?v=28'
 ];
 self.addEventListener('install', event => {
   self.skipWaiting();

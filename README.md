@@ -1,10 +1,10 @@
 # Flightline Tracker
 
-**v27** adds a simplified UPS sync extension, confirmed-jumpseat import as DH, a fix for zero-padded UPS flight numbers in FlightAware tracking, improved PWA/mobile behavior, and richer weather replay.
+**v28** focuses on mobile/PWA polish, a date-by-date Actual-vs-Initial history comparison, and more reliable user-triggered UPS schedule synchronization.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
-Flightline Tracker shows the current trip on a world map, follows live flights with FlightAware AeroAPI, saves the exact flown track after landing, replays completed flights, and imports Logbook Pro history.
+Flightline Tracker shows the current trip on a world map, follows live flights with FlightAware AeroAPI, saves the flown track after landing, replays completed flights, imports Logbook Pro history, and can accept UPS Work Schedule / confirmed jumpseat data from the companion Edge extension.
 
 ## Highlights
 
@@ -13,7 +13,8 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - Exact completed tracks saved locally for replay
 - English / French / Russian UI
 - Light / dark themes, mobile layout and map-only mode
-- Awarded vs. edited/current schedule views
+- Immutable awarded schedule alongside edited/current schedule
+- Date-by-date **Actual / Current vs Initial Schedule** history comparison
 - Automatic rest detection for 10+ hour gaps
 - Lifetime logbook map with route/airport statistics and aircraft filters
 - Logbook Pro CSV and native `.lbk` import
@@ -21,44 +22,76 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - Admin-only editing while normal viewers need no login
 - Persistent data under `/data`
 - GitHub → GHCR → Watchtower deployment support
-- Manual-trigger Edge extension for UPS Work Schedule → Current schedule sync
+- User-triggered Edge extension for UPS Work Schedule and confirmed jumpseat sync
 
+## v28 mobile and status changes
 
-## v27 UPS Work Schedule + Jumpseat sync
+- Android-safe maskable PWA icons keep the aircraft inside the adaptive-icon safe area, reducing cropping on circular launchers.
+- The phone hamburger now opens a real right-side drawer above the status card.
+- Clock values no longer carry `CDT`, `CST`, or `UTC(+5)`-style suffixes.
+- Takeoff/landing metrics have quick aircraft symbols.
+- Airborne status starts with **Flying…**.
+- Delay/ahead is represented in its own metric with a colored status dot rather than another flag in the status sentence.
+- The metric grid now precedes a smaller, structured Next Flight card.
+- The map-only button uses a clearer expand/show-interface icon.
+- Leaflet's default branding box is removed; mandatory map/weather source credits are combined into a small unobtrusive credit line.
 
-The `edge-extension/` folder contains the desktop Edge extension. The normal popup is intentionally small: one Sync button plus a hidden settings menu. A background service worker only recognizes supported tabs and can show a brief “ready to sync” notification; it does not scrape or interact with UPS automatically.
+## v28 history comparison
 
-Schedule sync remains screen-capture-first with a Ctrl+A / Ctrl+C fallback if OCR is incomplete or uncertain. Confirmed jumpseats can now be synchronized from the Crew Jumpseat screen and are stored as deadheads. The default filter imports only rows touching DFW; this can be changed in extension settings.
+The main History view is no longer organized primarily as independent trip tables. It is a vertical date timeline with parallel lanes:
 
-The extension never automates login/MFA, search, jumpseat booking, Autobook, schedule adjustments, form submission, UPS cookies, or background UPS requests. Nothing is sent until the user presses Sync.
+```text
+DATE        ACTUAL / CURRENT              INITIAL SCHEDULE
+Sep 18     UPS99 ICN → ANC               UPS... original awarded leg
+Sep 19     UPS109 ANC → SDF (DH)          UPS... original awarded leg
+...
+```
 
-`SCHEDULE_SYNC_TOKEN` is still required in Docker/Portainer.
+**Actual / Current** uses active current schedule rows and tracked actual state. **Initial Schedule** uses the immutable `awarded_*` snapshot created from the PDF. This means a reroute or replacement can disappear from Current without erasing what was originally awarded.
 
-### Tracking fix for zero-padded UPS identifiers
+Trip-level Current/Awarded maps and deletion controls remain available under a collapsed **Saved trip tools** section.
 
-UPS internal pages may display a flight such as `UPS0751` while FlightAware publishes the provider designator as `UPS751`. v27 preserves the UPS display number in the schedule but removes display-only leading zeros when querying AeroAPI. This fixes a failure mode where the tracker repeatedly polled a real flight but could not match it.
+## v28 UPS Work Schedule sync
 
-### PWA / phone / icons
+The Edge extension lives in the separate `edge-extension/` directory. The popup is intentionally small and settings remain behind ⚙.
 
-- service worker is now served from `/sw.js` with root scope so the main app is actually controlled by the PWA service worker;
-- manifest adds explicit scope/id and maskable icons;
-- favicon/PWA asset versions are bumped and `/favicon.ico` serves the current blue-background icon;
-- Chromium can show an in-app **Install app** button when installation is available;
-- on phones the large top bar is replaced by a small hamburger menu and the full status panel stays visible.
+The default v4 sync path is:
 
-## v24 schedule-state fix
+1. You manually open a supported UPS page.
+2. You explicitly press **Sync**.
+3. The extension briefly performs Ctrl+A / Ctrl+C on that active tab through Edge's debugger API, sends Escape to clear selection, and immediately detaches.
+4. It parses Zscaler's copied text locally and sends normalized data to your tracker.
+5. If that user-triggered copy operation is unavailable, it tries visible-tab OCR; if OCR is uncertain it asks for the manual Ctrl+A / Ctrl+C fallback.
 
-`Current` now means exactly **the legs that are currently in your schedule**. FlightAware data can add live/actual information to a current leg, but it can no longer make a removed flight reappear.
+The extension does not automate login/MFA, UPS navigation, search, jumpseat booking, Autobook, schedule adjustments, form submission, cookies, or background UPS requests. One-click text capture can be disabled in extension settings. Managed Edge policy can block or report the debugger permission; the extension does not bypass those controls.
 
-When upgrading an older database, v24 automatically repairs legacy schedule state:
+`SCHEDULE_SYNC_TOKEN` is required in Docker/Portainer.
 
-- removed manual/replacement legs are cleaned out rather than kept as hidden tombstones;
-- provider tracks/actual times attached to an already-removed leg are discarded;
-- manual trips no longer inherit a fake "awarded" baseline;
-- active legs are renumbered chronologically;
-- the tracking worker only polls active flights.
+### Complete-coverage deletion safeguard
 
-If you remove a leg that already has FlightAware tracking data, the editor now allows it after a warning and discards that leg's saved provider track/actual times. PDF-awarded rows can still remain internally as the separate Awarded baseline.
+To establish a complete pay-period snapshot, press Sync once on the Work Schedule calendar, then manually open Time Detail from the first scheduled date and press Sync again. When the two lists agree, the extension sends `coverage_complete=true`.
+
+Only a complete-coverage sync may remove a previously tracked flight that UPS no longer lists. When that happens, Flightline Tracker removes its Actual / Current provider state, positions, tracker-generated logbook copy and archived weather. A PDF-awarded baseline remains intact and visible in **Initial Schedule**.
+
+A partial or date-forward Time Detail sync cannot erase an older tracked leg.
+
+### Confirmed jumpseats
+
+The Crew Jumpseat **Upcoming Jumpseats Confirmed** table can be synced too. Jumpseats are stored as **DH**. The default filter imports only confirmed rows touching DFW; this is configurable. No jumpseat search or booking control is automated.
+
+### Tracking fix retained from v27
+
+UPS internal pages can display `UPS0751` while FlightAware publishes `UPS751`. Flightline Tracker preserves the UPS display number but strips display-only leading zeros for the AeroAPI query.
+
+## PWA
+
+- root-scoped service worker at `/sw.js`;
+- explicit manifest id/scope;
+- normal and dedicated maskable 192/512 icons;
+- current blue-background favicon;
+- in-app **Install app** button when Chromium exposes the install prompt.
+
+After changing maskable icons, an already-installed Android PWA may need to be uninstalled/reinstalled once for the launcher to refresh its cached icon.
 
 ## Run locally
 
@@ -68,8 +101,6 @@ If you remove a leg that already has FlightAware tracking data, the editor now a
 
 Then open `http://127.0.0.1:8080`.
 
-The script creates a project-local `.venv`; it does not install Python packages system-wide.
-
 ## Docker / Portainer
 
 The included `docker-compose.yml` expects an image such as:
@@ -78,7 +109,7 @@ The included `docker-compose.yml` expects an image such as:
 ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
 ```
 
-Typical Portainer variables:
+Typical variables:
 
 ```text
 TRACKER_IMAGE=ghcr.io/YOUR_GITHUB_USER/flightline-tracker:stable
@@ -90,65 +121,30 @@ WEATHER_ARCHIVE_MAX_MB=100
 SCHEDULE_SYNC_TOKEN=generate-a-long-random-token
 ```
 
-Keep `/data` mounted to persistent storage. It contains the database, flight history, saved tracks, logbook, settings and weather snapshots, so container updates do not erase your history.
+Keep `/data` mounted persistently. It contains the database, flight history, saved tracks, logbook, settings, schedule-sync snapshots and weather archive.
 
-## Live tracking behavior
+## Live tracking
 
-The default live polling interval is about 10 minutes while somebody is viewing the map.
-
-When the site goes from **no viewers → at least one viewer**, Flightline Tracker requests one fresh provider update. If the current/next flight was already refreshed within the previous 10 minutes, it reuses that data instead. Refreshing the browser therefore cannot create a burst of paid API calls.
-
-When nobody is viewing, tracking falls back to a slower cadence. After landing, one final detailed track is saved locally so replay/history no longer needs AeroAPI.
+The default live polling interval is about 10 minutes while somebody is viewing the map. Going from no viewers to an active viewer triggers one freshness check, with a recent-result guard to avoid API bursts. When nobody is viewing, tracking falls back to a slower cadence. After landing, one final detailed track is saved locally.
 
 ## Weather replay
 
-Normal flights keep up to five compact RainViewer replay snapshots; flights planned for 8 hours or more keep up to seven, distributed through the flight. The archive still uses the configurable global cap (`WEATHER_ARCHIVE_MAX_MB`, default 100 MB).
-
-The live Weather on/off preference is saved separately in each browser and defaults to **On**.
+Normal flights retain up to five compact RainViewer snapshots. Flights planned for 8 hours or more retain up to seven, distributed through the flight. The global archive remains bounded by `WEATHER_ARCHIVE_MAX_MB` (default 100 MB).
 
 ## GitHub → GHCR → Watchtower
 
-A push to `main` runs `.github/workflows/docker-publish.yml`:
+A push to `main` runs the Docker-publish workflow. A separate workflow packages `edge-extension/` into a store-ready ZIP when extension files change.
 
-```text
-git push
-  ↓
-GitHub Actions builds the Docker image
-  ↓
-GHCR publishes flightline-tracker:stable
-  ↓
-Watchtower sees the new image digest
-  ↓
-Synology replaces the container
-  ↓
-the same /data directory is mounted again
-```
-
-For a normal release:
+Typical update:
 
 ```bash
 git add -A
-git commit -m "Describe the update"
+git commit -m "Flightline Tracker v28"
 git push origin main
 ```
 
-## UPS schedule extension
-
-The schedule-sync receiver is active when `SCHEDULE_SYNC_TOKEN` is configured. The Edge extension remains in the separate `edge-extension/` directory in this repository.
-
-v27 uses a conservative user-triggered workflow:
-
-1. You manually open UPS **Time Detail** from the first scheduled flight/date.
-2. You explicitly click **Sync current page** in the extension.
-3. Edge captures only the visible tab and sends that image to your own Flightline Tracker `/api/integrations/ups-schedule/ocr` endpoint.
-4. The tracker runs local Tesseract OCR in memory and returns text; it does not save the screenshot.
-5. The extension validates every in-pay-period row before sending normalized schedule JSON to `/api/integrations/ups-schedule`.
-6. If OCR is unclear or the whole table is not visible, nothing is applied and the extension requests the existing Ctrl+A / Ctrl+C copied-text fallback.
-
-There is no UPS login/MFA automation, no UPS form submission, no cookies/debugger permission, no background polling, and no automated clicking of the UPS site. The integration remains disabled when `SCHEDULE_SYNC_TOKEN` is blank.
-
-The Docker image includes `tesseract-ocr`, Pillow, and `pytesseract` for local screenshot reading. The extension ZIP can be produced by `.github/workflows/package-edge-extension.yml` for Edge Add-ons or manual testing.
+Your persistent `/data` bind mount is reused when Watchtower replaces the application container.
 
 ## Data providers
 
-Maps: OpenFreeMap · Weather: RainViewer · Live tracking: FlightAware AeroAPI when configured.
+Maps: OpenFreeMap / OpenMapTiles / OpenStreetMap data · Weather: RainViewer · Live tracking: FlightAware AeroAPI when configured.

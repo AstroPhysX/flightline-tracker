@@ -53,3 +53,39 @@ chrome.tabs.onActivated.addListener(async info => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' || changeInfo.title || changeInfo.url) update(tab).catch(()=>{});
 });
+
+
+async function sleep(ms){ return new Promise(resolve=>setTimeout(resolve,ms)); }
+async function dispatchKey(tabId, params){ return chrome.debugger.sendCommand({tabId}, 'Input.dispatchKeyEvent', params); }
+
+async function copyRemotePageText(tabId){
+  const tab=await chrome.tabs.get(tabId);
+  if(!pageKind(tab)) throw new Error('This tab is not a supported UPS page.');
+  const target={tabId};
+  await chrome.debugger.attach(target,'1.3');
+  try{
+    // User-triggered only. The short-lived debugger attachment injects the same
+    // Select All / Copy keystrokes the user previously performed by hand.
+    await dispatchKey(tabId,{type:'keyDown',key:'Control',code:'ControlLeft',windowsVirtualKeyCode:17,nativeVirtualKeyCode:17,modifiers:2});
+    await dispatchKey(tabId,{type:'rawKeyDown',key:'a',code:'KeyA',windowsVirtualKeyCode:65,nativeVirtualKeyCode:65,modifiers:2});
+    await dispatchKey(tabId,{type:'keyUp',key:'a',code:'KeyA',windowsVirtualKeyCode:65,nativeVirtualKeyCode:65,modifiers:2});
+    await sleep(120);
+    await dispatchKey(tabId,{type:'rawKeyDown',key:'c',code:'KeyC',windowsVirtualKeyCode:67,nativeVirtualKeyCode:67,modifiers:2});
+    await dispatchKey(tabId,{type:'keyUp',key:'c',code:'KeyC',windowsVirtualKeyCode:67,nativeVirtualKeyCode:67,modifiers:2});
+    await dispatchKey(tabId,{type:'keyUp',key:'Control',code:'ControlLeft',windowsVirtualKeyCode:17,nativeVirtualKeyCode:17,modifiers:0});
+    await sleep(220);
+    // Best-effort clear of the remote selection without navigating/clicking.
+    await dispatchKey(tabId,{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27,nativeVirtualKeyCode:27,modifiers:0}).catch(()=>{});
+    await dispatchKey(tabId,{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27,nativeVirtualKeyCode:27,modifiers:0}).catch(()=>{});
+    await sleep(80);
+    return {ok:true};
+  } finally {
+    await chrome.debugger.detach(target).catch(()=>{});
+  }
+}
+
+chrome.runtime.onMessage.addListener((message,sender,sendResponse)=>{
+  if(message?.action!=='copy-active-page-text') return;
+  copyRemotePageText(Number(message.tabId)).then(sendResponse).catch(err=>sendResponse({ok:false,error:err?.message||String(err)}));
+  return true;
+});

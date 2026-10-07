@@ -91,6 +91,7 @@ class BrowserScheduleSync(BaseModel):
     pay_period_end: date | None = None
     coverage_start_date: date | None = None
     coverage_end_date: date | None = None
+    coverage_complete: bool = False
     fleet: str | None = Field(default=None, max_length=24)
     seat: str | None = Field(default=None, max_length=24)
     domicile: str | None = Field(default=None, max_length=8)

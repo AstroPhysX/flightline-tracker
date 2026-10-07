@@ -1,5 +1,7 @@
 const {t,toggle:toggleLanguage,locale:currentLocale}=window.TrackerI18n;
-const map=L.map('logbook-map',{zoomControl:false,worldCopyJump:false,minZoom:1,preferCanvas:true,maxBounds:[[-85.0511,-1000000],[85.0511,1000000]],maxBoundsViscosity:1}).setView([25,0],2);
+const map=L.map('logbook-map',{zoomControl:false,attributionControl:false,worldCopyJump:false,minZoom:1,preferCanvas:true,maxBounds:[[-85.0511,-1000000],[85.0511,1000000]],maxBoundsViscosity:1}).setView([25,0],2);
+
+const dataCredit=document.createElement('div');dataCredit.className='data-credit';dataCredit.innerHTML='<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a>';document.body.appendChild(dataCredit);
 const pathRenderer=L.canvas({padding:.35});
 L.control.zoom({position:'bottomright'}).addTo(map);
 
@@ -8,11 +10,11 @@ const MapOnlyControl=L.Control.extend({
   onAdd(){
     const wrap=L.DomUtil.create('div','leaflet-bar map-only-control');
     const btn=L.DomUtil.create('button','map-only-button',wrap);
-    btn.type='button'; btn.id='map-only-toggle'; btn.textContent='▣'; btn.title=t('map_only');
+    btn.type='button'; btn.id='map-only-toggle'; btn.textContent='⛶'; btn.title=t('map_only');
     L.DomEvent.disableClickPropagation(wrap);
     L.DomEvent.on(btn,'click',()=>{
       document.body.classList.toggle('map-only');
-      btn.classList.toggle('active',document.body.classList.contains('map-only'));
+      btn.classList.toggle('active',document.body.classList.contains('map-only'));btn.textContent=document.body.classList.contains('map-only')?'▤':'⛶';
       btn.title=document.body.classList.contains('map-only')?t('show_ui'):t('map_only');
       setTimeout(()=>map.invalidateSize(),80);
     });

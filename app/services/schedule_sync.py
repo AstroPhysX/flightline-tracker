@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..models import Flight, Trip
 from .airport_resolver import ensure_airport
-from .schedule_service import clear_provider_tracking, resequence_trip, snapshot_awarded
+from . import weather_archive
+from .logbook_service import invalidate_logbook_caches
+from .schedule_service import clear_provider_tracking, discard_tracking_data, resequence_trip, snapshot_awarded
 
 MAX_HISTORY_FILES = 20
 
@@ -199,10 +201,12 @@ def _apply_payload(payload: dict[str, Any], db: Session) -> dict[str, int]:
     if not isinstance(incoming_trips, list) or not incoming_trips:
         raise HTTPException(400, "UPS schedule sync contained no trips.")
 
-    counts = {"added": 0, "updated": 0, "removed": 0, "unchanged": 0, "trips": 0}
+    coverage_complete = bool(payload.get("coverage_complete"))
+    counts = {"added": 0, "updated": 0, "removed": 0, "removed_history": 0, "unchanged": 0, "trips": 0}
     claimed_trip_ids: set[int] = set()
     matched_ids: set[int] = set()
     incoming_identities: set[tuple] = set()
+    weather_cleanup: list[int] = []
 
     for trip_payload in incoming_trips:
         if not isinstance(trip_payload, dict):
@@ -307,13 +311,15 @@ def _apply_payload(payload: dict[str, Any], db: Session) -> dict[str, int]:
 
     # Reconcile Current globally inside the coverage window, not just within
     # pairings that happened to survive the revision. This lets a completely
-    # replaced awarded trip disappear from Current. Already-flown legs remain
-    # historical facts and are never removed by a later schedule sync.
+    # replaced awarded trip disappear from Current. Historical provider data is
+    # kept for partial/date-forward syncs; a calendar-verified complete coverage
+    # snapshot may remove a past leg that UPS no longer lists.
     candidates = (
         db.query(Flight)
         .join(Trip, Flight.trip_id == Trip.id)
         .filter(
             Trip.active.is_(True),
+            Trip.source.in_(["ups_pdf", "ups_sync"]),
             Flight.schedule_active.is_(True),
             Flight.flight_date >= coverage_start,
             Flight.flight_date <= coverage_end,
@@ -326,14 +332,24 @@ def _apply_payload(payload: dict[str, Any], db: Session) -> dict[str, int]:
             continue
         if _flight_identity(row.flight_number, row.flight_date, row.origin, row.destination) in incoming_identities:
             continue
-        if row.actual_departure_utc or row.actual_arrival_utc:
+        had_history = bool(row.actual_departure_utc or row.actual_arrival_utc or row.provider_flight_id or row.positions)
+        if had_history and not coverage_complete:
+            # A partial/date-forward Time Detail view is not sufficient evidence
+            # to erase a historical leg. Only a calendar-verified full coverage
+            # snapshot may remove a past/current record that disappeared.
             continue
 
         trip = row.trip
+        if had_history:
+            discard_tracking_data(db, row)
+            weather_cleanup.append(row.id)
+            counts["removed_history"] += 1
         if trip.source == "ups_pdf" and row.awarded_flight_number:
+            # Preserve the immutable initial award for the comparison history,
+            # while removing this leg from Actual / Current.
             row.schedule_active = False
             row.sequence = 0
-            row.schedule_change_note = "Removed by UPS schedule sync"
+            row.schedule_change_note = "Removed by complete UPS schedule sync"
         else:
             db.delete(row)
         touched_trips.add(trip.id)
@@ -346,6 +362,10 @@ def _apply_payload(payload: dict[str, Any], db: Session) -> dict[str, int]:
             resequence_trip(db, trip)
 
     db.commit()
+    if counts["removed_history"]:
+        invalidate_logbook_caches()
+    for flight_id in weather_cleanup:
+        weather_archive.delete_flight_weather(flight_id)
     return counts
 
 

@@ -1,38 +1,51 @@
-# Flightline Tracker UPS Sync — Edge extension v3
+# Flightline Tracker UPS Sync — Edge extension v4
 
-The extension stays deliberately **user-triggered**. It does not log in to UPS, handle MFA, click UPS controls, search/book/cancel jumpseats, submit forms, read UPS cookies, or poll UPS in the background.
+The extension is user-triggered. It does not log in to UPS, handle MFA, navigate UPS, search/book/cancel jumpseats, use Autobook, submit forms, read UPS cookies, or poll UPS in the background.
 
-## What v3 adds
+## Normal interface
 
-- much smaller normal popup — one Sync button plus a hidden ⚙ settings panel;
-- brief Edge notification/badge when a supported UPS page is detected;
-- Work Schedule / Time Detail sync using the existing screen-capture-first, copied-text-fallback workflow;
-- confirmed Jumpseat screen sync, imported into Flightline Tracker as **deadhead (DH)** legs;
-- DFW is the default jumpseat filter; turn off **Only import confirmed jumpseats touching this airport** to import all confirmed rows shown;
-- a **Test connection** button for the tracker URL/token;
-- store-ready packaging via `.github/workflows/package-edge-extension.yml`.
+The popup stays intentionally small: page status, one Sync button, last result, and a ⚙ settings drawer. A brief notification and `SYNC` badge can appear when Edge recognizes a supported Work Schedule / Time Detail / Crew Jumpseat tab. Detection alone does not copy or transmit the page.
 
-## Schedule sync
+## One-click schedule text capture
 
-1. Sign in to UPS normally.
-2. Open Work Schedule and click the first scheduled flight/date so Time Detail shows the full period from its first leg onward.
-3. Open Flightline Sync and press **Sync schedule**.
-4. The extension captures the visible tab only after your click. Your self-hosted tracker performs in-memory OCR.
-5. If the entire Time Detail table is not visible or OCR is uncertain, nothing is changed and the popup asks you to use Ctrl+A / Ctrl+C, then **Sync copied text**.
+The default setting **One-click text capture** is designed for Zscaler Browser Isolation, where ordinary DOM scraping cannot see the remote UPS table.
+
+After — and only after — you press Sync, the extension briefly attaches Edge's debugger API to the active supported tab, sends Ctrl+A then Ctrl+C, sends Escape to clear selection, and detaches. It then parses the clipboard text locally and sends only normalized schedule/jumpseat data to your Flightline Tracker.
+
+Fallback order:
+
+1. user-triggered one-click text capture;
+2. visible-tab screenshot + OCR on your own Flightline Tracker;
+3. manual Ctrl+A / Ctrl+C if both automated methods are unavailable or uncertain.
+
+You can disable **One-click text capture** in ⚙ at any time. This removes debugger use from the normal sync path, though the permission remains declared in the installed build.
+
+Managed Edge/browser policy may block or warn about the debugger permission. The extension cannot and should not bypass those controls.
+
+## Complete schedule coverage
+
+For safest removals, first press Sync while on the Work Schedule calendar. That stores the calendar flight list locally; it does not change Flightline Tracker yet. Then manually open Time Detail from the first scheduled date and press Sync again.
+
+When the calendar and Time Detail lists agree, the extension marks the payload as complete pay-period coverage. This allows Flightline Tracker to remove a leg that UPS no longer lists, including a previously tracked leg, while keeping the immutable PDF-awarded baseline for history comparison.
+
+A Time Detail page opened from a later date is treated as partial and cannot erase older tracked history.
 
 ## Jumpseat sync
 
-On the **Crew Jumpseat** page, press **Sync jumpseats**. Only the **Upcoming Jumpseats Confirmed** table is read. Search Flights, Autobook, View, standby booking and other controls are not touched.
+On **Crew Jumpseat**, press Sync. Only **Upcoming Jumpseats Confirmed** rows are parsed. Imported jumpseats are marked **DH**.
 
-By default, only confirmed jumpseats whose origin or destination is `DFW` are imported. They are added to the nearest current trip when they clearly position into/out of that trip; otherwise a separate jumpseat trip is created. All imported jumpseats are marked DH.
+By default, only confirmed jumpseats whose origin or destination is `DFW` are imported. Change the airport or turn off the filter in ⚙ if desired. Search Flights, View, Autobook and booking controls are not touched.
 
 ## First-time configuration
 
 Open ⚙ and set:
 
-- Flightline Tracker URL
-- the same `SCHEDULE_SYNC_TOKEN` configured in Docker/Portainer
-- Jumpseat home airport (default `DFW`)
+- Flightline Tracker URL;
+- the same `SCHEDULE_SYNC_TOKEN` configured in Docker/Portainer;
+- jumpseat home airport (default `DFW`);
+- optional one-click text capture toggle.
+
+Use **Test connection** to verify the URL and token without changing a schedule.
 
 ## Desktop Edge installation for testing
 
@@ -41,19 +54,16 @@ Open ⚙ and set:
 3. Click **Load unpacked**.
 4. Select this `edge-extension` folder.
 
-If Developer mode is disabled/reset by browser or company policy, the extension cannot force it back on. For a persistent normal installation, publish the extension to Microsoft Edge Add-ons (a hidden/unlisted listing is appropriate) and install it from that listing instead of using Load unpacked. The GitHub packaging workflow produces the ZIP to upload.
+An unpacked extension cannot force Developer mode to remain enabled when Edge or company policy disables/resets it. For a persistent normal installation, publish it to Microsoft Edge Add-ons as a hidden/unlisted extension and install from that listing.
 
 ## Permissions
 
-- `activeTab` — one-time visible-tab capture after you click Sync;
-- `clipboardRead` — explicit fallback only;
-- `storage` — settings and short-lived fallback state;
-- `tabs` — recognizes supported Work Schedule / Jumpseat tabs and changes the extension badge;
-- `notifications` — brief “ready to sync” notification when a supported page is recognized;
-- tracker host permission is requested only for the tracker URL you configure.
+- `activeTab` — visible-tab capture after Sync;
+- `clipboardRead` — reads the result of the user-triggered copy or manual fallback;
+- `storage` — settings/calendar snapshot/fallback state;
+- `tabs` — recognizes supported tabs and updates badge;
+- `notifications` — brief ready-to-sync notice;
+- `debugger` — only for the explicit one-click Ctrl+A / Ctrl+C operation;
+- tracker host permission — requested only for the Flightline Tracker URL you configure.
 
-There is no `debugger`, `cookies`, UPS/Zscaler host permission, persistent content script, or automated UPS request.
-
-## Company iPad
-
-The desktop extension cannot normally be sideloaded by the user into Edge on a company-managed iPad. It would require organizational deployment/support. The tracker remains usable there without the extension.
+There is no cookies permission and no permanent UPS/Zscaler host permission.

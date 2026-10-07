@@ -9,6 +9,7 @@ async function adminFetch(url, options={}) {
 }
 const map = L.map('map', {
   zoomControl: false,
+  attributionControl: false,
   worldCopyJump: false,
   minZoom: 1,
   maxBounds: [[-85.0511, -1000000], [85.0511, 1000000]],
@@ -34,12 +35,13 @@ const MapOnlyControl = L.Control.extend({
   onAdd(){
     const wrap=L.DomUtil.create('div','leaflet-bar map-only-control');
     const btn=L.DomUtil.create('button','map-only-button',wrap);
-    btn.type='button'; btn.id='map-only-toggle'; btn.textContent='▣'; btn.title=t('map_only');
+    btn.type='button'; btn.id='map-only-toggle'; btn.textContent='⛶'; btn.title=t('map_only');
     L.DomEvent.disableClickPropagation(wrap);
     L.DomEvent.on(btn,'click',()=>{
       document.body.classList.toggle('map-only');
       const hidden=document.body.classList.contains('map-only');
       btn.classList.toggle('active',hidden);
+      btn.textContent=hidden?'▤':'⛶';
       btn.title=hidden?t('show_ui'):t('map_only');
       setTimeout(()=>map.invalidateSize(),80);
     });
@@ -147,10 +149,14 @@ function routeColors() {
 const warning = document.createElement('div');
 warning.className = 'map-warning';
 document.body.appendChild(warning);
-const weatherCredit=document.createElement('div');
-weatherCredit.className='weather-credit';
-weatherCredit.innerHTML=`${t('radar_credit').replace('RainViewer','')}<a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>`;
-document.body.appendChild(weatherCredit);
+const dataCredit=document.createElement('div');
+dataCredit.className='data-credit';
+document.body.appendChild(dataCredit);
+function updateDataCredit(){
+  const weather=weatherEnabled||Boolean(replayWeatherLayer);
+  dataCredit.innerHTML=`<a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a>${weather?` · <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>`:''}`;
+}
+updateDataCredit();
 
 function showWarning(text) {
   warning.textContent = text || '';
@@ -526,7 +532,9 @@ function drawDashboard(data) {
 
 function fmtDallas(iso) {
   if (!iso) return '—';
-  return new Intl.DateTimeFormat(currentLocale(),{timeZone:'America/Chicago',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false,timeZoneName:'short'}).format(new Date(iso));
+  return new Intl.DateTimeFormat(currentLocale(),{
+    timeZone:'America/Chicago', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false
+  }).format(new Date(iso));
 }
 
 function timingLabel(f) {
@@ -546,48 +554,47 @@ function fmtDelay(f) {
   return '—';
 }
 
-function updateTimingBadge(f) {
-  const badge=document.getElementById('status-timing-badge');
-  if(!badge) return;
+function updateDelayMetric(f) {
+  const el=document.getElementById('delay');
+  if(!el) return;
   const flag=f?.timing?.flag || 'unknown';
-  if(flag==='unknown') { badge.className='timing-badge hidden'; badge.textContent=''; return; }
-  badge.className=`timing-badge timing-${flag}`;
-  badge.textContent=timingLabel(f);
+  el.className=`delay-metric timing-${flag}`;
+  el.textContent=fmtDelay(f);
 }
 
 function setMetricLabels(primaryKey, secondaryKey) {
   const a=document.getElementById('primary-time-label');
   const b=document.getElementById('secondary-time-label');
-  if(a) a.textContent=t(primaryKey);
-  if(b) b.textContent=t(secondaryKey);
+  const htmlFor=(key)=>{
+    const landing=/landing|landed/i.test(key);
+    return `<span class="metric-plane-icon" aria-hidden="true">${landing?'🛬':'🛫'}</span> <span>${escapeHtml(t(key))}</span>`;
+  };
+  if(a) a.innerHTML=htmlFor(primaryKey);
+  if(b) b.innerHTML=htmlFor(secondaryKey);
 }
 
-function nextFlightDescriptionHtml(next, previousFlight=null) {
+function nextFlightDescriptionHtml(next) {
   if (!next) return '';
   const when=fmtDallas(bestDepartureIso(next,{actual:false}));
   const reference=next.historical_average_hours!=null
-    ? ` · ${escapeHtml(t('typical_short',{time:formatHoursDuration(next.historical_average_hours)}))}`
-    : next.route_estimated_hours!=null ? ` · ${escapeHtml(t('estimated_short',{time:formatHoursDuration(next.route_estimated_hours)}))}` : '';
+    ? escapeHtml(t('typical_short',{time:formatHoursDuration(next.historical_average_hours)}))
+    : next.route_estimated_hours!=null ? escapeHtml(t('estimated_short',{time:formatHoursDuration(next.route_estimated_hours)})) : '';
+  const dh=next.deadhead?`<span class="next-flight-chip">${escapeHtml(t('deadhead'))}</span>`:'';
+  return `<div class="next-flight-top"><span class="status-next-heading">${escapeHtml(t('next_flight_heading'))}</span><span class="next-flight-when">${escapeHtml(when)}</span></div>`+
+    `<div class="next-flight-route">${flightExternalLinksHtml(next)}<span class="next-flight-airports">${escapeHtml(next.origin)} → ${escapeHtml(next.destination)}</span>${dh}</div>`+
+    (reference?`<div class="next-flight-reference">${reference}</div>`:'');
+}
 
-  let gapHtml='';
-  if(previousFlight){
-    const endIso=bestArrivalIso(previousFlight,{actual:previousFlight.status!=='current'});
-    const nextIso=bestDepartureIso(next,{actual:false});
-    if(endIso && nextIso){
-      const minutes=Math.round((new Date(nextIso)-new Date(endIso))/60000);
-      if(Number.isFinite(minutes) && minutes>=0){
-        gapHtml=`<div class="status-next-gap">${escapeHtml(t('expected_between_flights',{time:formatMinutesDuration(minutes)}))}</div>`;
-      }
-    }
-  }
-
-  return `<div class="status-next-heading">${escapeHtml(t('next_flight_heading'))}</div>`+
-    `<div class="status-next-main">${escapeHtml(when)} · ${flightExternalLinksHtml(next)} · ${escapeHtml(flightRouteText(next))}${reference}</div>`+
-    gapHtml;
+function setNextFlightCard(next) {
+  const card=document.getElementById('next-flight-card');
+  if(!card) return;
+  if(!next){ card.innerHTML=''; card.classList.add('hidden'); return; }
+  card.innerHTML=nextFlightDescriptionHtml(next);
+  card.classList.remove('hidden');
 }
 
 function statusMainFlightHtml(f) {
-  return `${flightExternalLinksHtml(f)} · ${escapeHtml(flightRouteText(f))}`;
+  return `<span class="flying-state">${escapeHtml(t('flying'))}</span> <span class="flying-flight">${flightExternalLinksHtml(f)} · ${escapeHtml(f.origin)} → ${escapeHtml(f.destination)}</span>`;
 }
 
 function updateStatusText() {
@@ -596,9 +603,10 @@ function updateStatusText() {
   if (!dashboard || !dashboard.trip) {
     mainEl.textContent=t('waiting_trip');
     detailEl.textContent='';
-    ['takeoff-dallas','landing-dallas','delay','rest-timer'].forEach(id=>document.getElementById(id).textContent='—');
+    ['takeoff-dallas','landing-dallas','rest-timer'].forEach(id=>document.getElementById(id).textContent='—');
     setMetricLabels('takeoff_dallas','landing_dallas');
-    updateTimingBadge(null);
+    updateDelayMetric(null);
+    setNextFlightCard(null);
     return;
   }
   const flights=dashboard.flights || [];
@@ -613,8 +621,7 @@ function updateStatusText() {
     const telemetry=[current.registration,current.aircraft_type,current.altitude_ft?`FL${Math.round(current.altitude_ft/100)}`:null,current.groundspeed_kt?`${current.groundspeed_kt} kt`:null,current.last_position_utc?`${t('position')} ${new Date(current.last_position_utc).toLocaleTimeString(currentLocale(),{hour12:false})}`:null].filter(Boolean).map(escapeHtml);
     const publicDelay=Number(dashboard?.status?.position_delay_minutes || 0);
     const delayNote=publicDelay>0?`<span class="status-note">${escapeHtml(t('public_position_delayed',{minutes:publicDelay}))}</span>`:'';
-    const nextDescription=nextFlightDescriptionHtml(next,current);
-    detailHtml=`<div class="status-telemetry">${telemetry.map(x=>`<span>${x}</span>`).join('')}</div>${delayNote}${nextDescription?`<div class="status-next-flight">${nextDescription}</div>`:''}`;
+    detailHtml=`<div class="status-telemetry">${telemetry.map(x=>`<span>${x}</span>`).join('')}</div>${delayNote}`;
     delayFocus=current;
     primaryIso=bestDepartureIso(current);
     secondaryIso=bestArrivalIso(current,{actual:false});
@@ -622,14 +629,14 @@ function updateStatusText() {
   } else if (last && next) {
     const resting=(last.status==='completed' && dashboard?.status?.is_resting);
     mainHtml=escapeHtml(resting ? t('resting_at',{place:flightAirportDisplay(last,'destination')}) : t('on_ground_at',{place:flightAirportDisplay(last,'destination')}));
-    detailHtml=nextFlightDescriptionHtml(next,last)+(next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'');
+    detailHtml=next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'';
     delayFocus=next;
     primaryIso=bestArrivalIso(last);
     secondaryIso=bestDepartureIso(next,{actual:false});
     setMetricLabels('last_landing_dallas','next_takeoff_dallas');
   } else if (next) {
-    mainHtml=escapeHtml(flightRouteText(next));
-    detailHtml=nextFlightDescriptionHtml(next)+(next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'');
+    mainHtml=escapeHtml(`${next.origin} → ${next.destination}`);
+    detailHtml=next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'';
     delayFocus=next;
     primaryIso=bestDepartureIso(next,{actual:false});
     secondaryIso=bestArrivalIso(next,{actual:false});
@@ -645,20 +652,19 @@ function updateStatusText() {
 
   mainEl.innerHTML=mainHtml || escapeHtml(t('waiting_trip'));
   detailEl.innerHTML=detailHtml;
-  updateTimingBadge(delayFocus);
+  updateDelayMetric(delayFocus);
   document.getElementById('takeoff-dallas').textContent=fmtDallas(primaryIso);
   document.getElementById('landing-dallas').textContent=fmtDallas(secondaryIso);
-  document.getElementById('delay').textContent=fmtDelay(delayFocus);
+  setNextFlightCard(next);
 }
 
 function updateClocks() {
   const now=new Date();
   document.getElementById('dallas-time').textContent=new Intl.DateTimeFormat(currentLocale(),{timeZone:'America/Chicago',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
   const tz=dashboard?.status?.local_timezone || 'UTC';
-  const label=dashboard?.status?.local_label;
   const clockName=dashboard?.status?.local_clock_name || 'Jerome';
   const clockTitle=t('custom_time_label',{name:clockName});
-  document.getElementById('local-label').textContent=label ? `${clockTitle} · ${label}` : clockTitle;
+  document.getElementById('local-label').textContent=clockTitle;
   try {
     document.getElementById('local-time').textContent=new Intl.DateTimeFormat(currentLocale(),{timeZone:tz,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
   } catch { document.getElementById('local-time').textContent='--:--'; }
@@ -701,7 +707,7 @@ function ensureReplayPanel(){
 function clearReplayWeather(){
   if(replayWeatherLayer){map.removeLayer(replayWeatherLayer);replayWeatherLayer=null;}
   replayWeatherKey=null;
-  if(!weatherEnabled) weatherCredit.style.display='none';
+  updateDataCredit();
 }
 
 function replayWeatherStatus(text){const el=document.getElementById('replay-weather-status');if(el)el.textContent=text||'';}
@@ -738,7 +744,7 @@ function updateReplayWeather(iso){
       replayWeatherLayer=L.imageOverlay(archived.url,[[Number(b.south),Number(b.west)+offset],[Number(b.north),Number(b.east)+offset]],{pane:'weatherPane',opacity:.58,interactive:false}).addTo(map);
       replayWeatherKey=key;
     }
-    weatherCredit.style.display='block';
+    updateDataCredit();
     replayWeatherStatus(t('replay_weather_archived',{time:new Date((archived.radar_time||0)*1000).toISOString().slice(11,16)+'Z'}));
     return;
   }
@@ -748,10 +754,10 @@ function updateReplayWeather(iso){
     const key=`recent:${recent.time}`;
     if(replayWeatherKey!==key){
       clearReplayWeather();
-      replayWeatherLayer=L.tileLayer(`${replayRainViewerPayload.host}${recent.path}/256/{z}/{x}/{y}/2/1_1.png`,{pane:'weatherPane',opacity:.56,maxNativeZoom:7,maxZoom:12,noWrap:false,attribution:'Weather radar © RainViewer'}).addTo(map);
+      replayWeatherLayer=L.tileLayer(`${replayRainViewerPayload.host}${recent.path}/256/{z}/{x}/{y}/2/1_1.png`,{pane:'weatherPane',opacity:.56,maxNativeZoom:7,maxZoom:12,noWrap:false}).addTo(map);
       replayWeatherKey=key;
     }
-    weatherCredit.style.display='block';
+    updateDataCredit();
     replayWeatherStatus(t('replay_weather_recent',{time:new Date(Number(recent.time)*1000).toISOString().slice(11,16)+'Z'}));
     return;
   }
@@ -838,7 +844,7 @@ async function setWeatherEnabled(enabled, {persist=true}={}) {
   btn.title=weatherEnabled?t('weather_on'):t('weather_off');
   btn.setAttribute('aria-label',btn.title);
   btn.textContent=weatherEnabled?'☔':'☁';
-  weatherCredit.style.display=weatherEnabled?'block':'none';
+  updateDataCredit();
   if(!weatherEnabled){
     if(weatherLayer){map.removeLayer(weatherLayer);weatherLayer=null;}
     return;
@@ -853,11 +859,10 @@ async function setWeatherEnabled(enabled, {persist=true}={}) {
     if(weatherLayer) map.removeLayer(weatherLayer);
     weatherLayer=L.tileLayer(`${payload.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`,{
       pane:'weatherPane',opacity:.56,maxNativeZoom:7,maxZoom:12,noWrap:false,
-      attribution:'Weather radar © RainViewer'
     }).addTo(map);
     weatherFrameGenerated=payload.generated || frame.time || null;
   }catch(err){
-    weatherEnabled=false;btn.classList.remove('active');btn.textContent='☁';btn.title=t('weather_off');weatherCredit.style.display='none';
+    weatherEnabled=false;btn.classList.remove('active');btn.textContent='☁';btn.title=t('weather_off');updateDataCredit();
     showWarning(t('weather_unavailable',{error:err.message}));
   }
 }
@@ -1243,7 +1248,7 @@ document.addEventListener('tracker-theme-change', async(ev)=>{
 document.addEventListener('tracker-language-change',async(ev)=>{
   updateLanguageButton();
   applyMapLanguage(ev.detail?.language || window.TrackerI18n.language);
-  weatherCredit.innerHTML=`${t('radar_credit').replace('RainViewer','')}<a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>`;
+  updateDataCredit();
   const weatherBtn=document.getElementById('weather-toggle'); if(weatherBtn) weatherBtn.title=weatherEnabled?t('weather_on'):t('weather_off');
   const mapOnlyBtn=document.getElementById('map-only-toggle'); if(mapOnlyBtn) mapOnlyBtn.title=document.body.classList.contains('map-only')?t('show_ui'):t('map_only');
   updateProviderHelp();
@@ -1266,6 +1271,7 @@ for (const cfg of [
 // Mobile menu keeps the map uncluttered while leaving every action available.
 const mobileMenuButton=document.getElementById('mobile-menu-button');
 mobileMenuButton?.addEventListener('click',()=>document.body.classList.toggle('mobile-menu-open'));
+document.querySelector('.topbar nav')?.addEventListener('click',ev=>{if(ev.target.closest('a,button')) document.body.classList.remove('mobile-menu-open');});
 document.addEventListener('click',ev=>{
   if(!document.body.classList.contains('mobile-menu-open')) return;
   if(ev.target.closest('#mobile-menu-button') || ev.target.closest('.topbar nav')) return;

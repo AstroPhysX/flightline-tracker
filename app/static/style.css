@@ -386,7 +386,7 @@ body.map-only .weather-credit { bottom:12px; }
 .status-next-gap { color:var(--muted); font-size:11px; font-weight:700; margin-top:3px; }
 .status-next-note { color:var(--muted); font-size:10px; font-weight:800; margin-top:2px; }
 
-/* v27 mobile current-trip layout: full status, minimal chrome. */
+/* Legacy v27 mobile current-trip rules; v28 drawer overrides appear below. */
 .mobile-menu-button { display:none; }
 @media (max-width:760px) {
   .topbar {
@@ -418,4 +418,105 @@ body.map-only .weather-credit { bottom:12px; }
 }
 @media (max-width:420px) {
   .status-panel { right:56px; max-height:none; }
+}
+
+/* v28 status, attribution, mobile drawer, and history comparison */
+.data-credit {
+  position:fixed; z-index:430; left:10px; bottom:7px; padding:3px 6px;
+  border-radius:6px; background:rgba(7,11,16,.68); color:rgba(231,238,245,.78);
+  font-size:9px; line-height:1.2; backdrop-filter:blur(6px); pointer-events:auto;
+}
+.data-credit a { color:inherit; text-decoration:none; }
+.data-credit a:hover { text-decoration:underline; }
+.maplibregl-ctrl-attrib, .leaflet-control-attribution { display:none !important; }
+.weather-credit { display:none !important; }
+
+.status-main-row { gap:8px; }
+.flying-state { font-weight:900; letter-spacing:.015em; }
+.flying-flight { display:inline; }
+.metric-plane-icon { font-size:12px; line-height:1; vertical-align:-1px; margin-right:2px; }
+.delay-metric { display:inline-flex; align-items:center; gap:6px; }
+.delay-metric::before { content:''; width:8px; height:8px; border-radius:50%; background:#75808d; box-shadow:0 0 0 2px rgba(117,128,141,.12); flex:0 0 auto; }
+.delay-metric.timing-delayed::before { background:#ff655f; box-shadow:0 0 0 2px rgba(255,101,95,.14); }
+.delay-metric.timing-ahead::before { background:#4ecb82; box-shadow:0 0 0 2px rgba(78,203,130,.14); }
+.delay-metric.timing-on_time::before { background:#57c7ff; box-shadow:0 0 0 2px rgba(87,199,255,.14); }
+.delay-metric.timing-unknown::before { background:#75808d; }
+
+.next-flight-card { margin-top:10px; padding-top:9px; border-top:1px solid var(--soft-border); display:grid; gap:4px; }
+.next-flight-top { display:flex; align-items:baseline; justify-content:space-between; gap:10px; min-width:0; }
+.next-flight-when { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.next-flight-route { display:flex; align-items:center; gap:7px; min-width:0; font-size:13px; }
+.next-flight-airports { font-weight:800; white-space:nowrap; }
+.next-flight-chip { border:1px solid var(--soft-border); border-radius:999px; padding:1px 6px; font-size:9px; color:var(--muted); font-weight:900; }
+.next-flight-reference { color:var(--muted); font-size:10px; }
+.status-next-flight { display:none !important; }
+
+@media (max-width:760px) {
+  body.mobile-menu-open::before {
+    content:''; position:fixed; inset:0; z-index:1175; background:rgba(0,0,0,.34); backdrop-filter:blur(1px);
+  }
+  .topbar {
+    position:fixed; z-index:1200; right:0; left:auto; top:0; bottom:0;
+    width:min(320px,86vw); min-height:0; height:auto; padding:max(62px,calc(env(safe-area-inset-top) + 58px)) 10px max(12px,env(safe-area-inset-bottom));
+    border-left:1px solid var(--border); border-radius:0; background:var(--panel);
+    box-shadow:-16px 0 40px rgba(0,0,0,.42); backdrop-filter:blur(20px);
+    transform:translateX(105%); transition:transform .2s ease; pointer-events:none;
+  }
+  body.mobile-menu-open .topbar { transform:translateX(0); pointer-events:auto; }
+  .topbar > div:first-child { display:none; }
+  .topbar nav {
+    display:flex; position:static; height:auto; max-height:calc(100dvh - 90px); padding:0;
+    flex-direction:column; align-items:stretch; overflow:auto; pointer-events:auto;
+    border:0; border-radius:0; background:transparent; box-shadow:none;
+  }
+  body.mobile-menu-open .topbar nav { display:flex; }
+  .topbar nav a, .topbar nav button { width:100%; min-height:44px; justify-content:flex-start; }
+  .mobile-menu-button { z-index:1300; }
+  .status-panel { z-index:600; }
+  .next-flight-card { margin-top:7px; padding-top:7px; }
+  .next-flight-top { gap:6px; }
+  .next-flight-when { font-size:10px; }
+  .next-flight-route { gap:5px; font-size:12px; }
+  .next-flight-reference { display:none; }
+  .data-credit { bottom:5px; left:7px; font-size:8px; }
+}
+
+/* Comparison timeline replaces the old trip-card table as the primary history UI. */
+.history-compare { margin-top:18px; }
+.history-compare-head { display:grid; grid-template-columns:112px 1fr 1fr; gap:14px; align-items:end; padding:0 10px 8px; color:var(--muted); font-size:10px; font-weight:900; letter-spacing:.08em; }
+.history-day { position:relative; display:grid; grid-template-columns:112px 1fr 1fr; gap:14px; padding:13px 10px; border-top:1px solid var(--border); }
+.history-day-date { position:relative; font-variant-numeric:tabular-nums; font-weight:850; font-size:13px; color:var(--text); padding-top:8px; }
+.history-day-date::before { content:''; position:absolute; left:-15px; top:13px; width:8px; height:8px; border-radius:50%; background:var(--link); box-shadow:0 0 0 4px rgba(75,160,255,.12); }
+.history-day-lane { display:grid; gap:7px; min-width:0; }
+.history-leg-card { border:1px solid var(--soft-border); background:var(--surface-2); border-radius:11px; padding:9px 10px; min-width:0; }
+.history-leg-card.initial { opacity:.82; border-style:dashed; }
+.history-leg-top { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.history-leg-flight { font-weight:900; color:var(--text); }
+.history-leg-route { margin-top:3px; font-size:12px; font-weight:750; }
+.history-leg-meta { margin-top:5px; display:flex; flex-wrap:wrap; align-items:center; gap:5px 7px; color:var(--muted); font-size:10px; }
+.history-leg-meta .timing-badge { padding:2px 6px; font-size:9px; }
+.history-trip-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:100%; }
+.history-empty-lane { color:var(--muted); padding:9px 0; }
+.history-trip-tools { margin-top:22px; border:1px solid var(--border); background:var(--surface); border-radius:14px; padding:12px 14px; }
+.history-trip-tools > summary { cursor:pointer; font-weight:850; }
+.history-trip-tools-hint { color:var(--muted); font-size:11px; margin:6px 0 12px; }
+.history-trip-tool-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:9px 0; border-top:1px solid var(--soft-border); }
+.history-trip-tool-row:first-of-type { border-top:0; }
+.history-trip-tool-name { min-width:0; }
+.history-trip-tool-name strong { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.history-trip-tool-name span { color:var(--muted); font-size:10px; }
+
+@media (max-width:760px) {
+  .history-compare-head { grid-template-columns:74px 1fr 1fr; gap:7px; padding-left:4px; padding-right:4px; font-size:8px; }
+  .history-day { grid-template-columns:74px 1fr 1fr; gap:7px; padding:9px 4px; }
+  .history-day-date { font-size:10px; padding-top:7px; }
+  .history-day-date::before { left:-8px; width:6px; height:6px; top:10px; }
+  .history-leg-card { padding:7px; border-radius:9px; }
+  .history-leg-top { display:block; }
+  .history-leg-flight { font-size:11px; }
+  .history-leg-route { font-size:10px; }
+  .history-leg-meta { font-size:8px; gap:3px 5px; }
+  .history-leg-meta .timing-badge { font-size:8px; }
+  .history-trip-label { display:none; }
+  .history-trip-tool-row { align-items:flex-start; flex-direction:column; }
 }
