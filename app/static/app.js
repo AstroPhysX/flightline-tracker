@@ -571,7 +571,7 @@ function setMetricLabels(primaryKey, secondaryKey) {
   const b=document.getElementById('secondary-time-label');
   const htmlFor=(key)=>{
     const landing=/landing|landed/i.test(key);
-    const icon=landing?'/static/icons/icon-landing.svg?v=30':'/static/icons/icon-takeoff.svg?v=30';
+    const icon=landing?'/static/icons/landing-label.png?v=31':'/static/icons/takeoff-label.png?v=31';
     return `<span class="metric-plane-icon" aria-hidden="true"><img src="${icon}" alt=""></span> <span>${escapeHtml(t(key))}</span>`;
   };
   if(a) a.innerHTML=htmlFor(primaryKey);

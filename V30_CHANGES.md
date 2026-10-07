@@ -1,4 +1,4 @@
-# v30 changes
+# v31 changes
 
 ## Status card
 
@@ -29,7 +29,7 @@
 - Up to five weather snapshots on normal flights and seven on long-haul flights.
 
 
-Additional v30 refinements:
+Additional v31 refinements:
 - Larger, clearer takeoff/landing SVG icons.
 - History timeline now groups trips inside larger schedule-group bands (e.g. BP 2606 · Line 18).
 - Actual/Current vertical trip labels are on the left; Initial Schedule labels are on the right.

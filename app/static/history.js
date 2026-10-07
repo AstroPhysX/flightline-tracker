@@ -31,21 +31,21 @@ document.addEventListener('tracker-language-change',applyDynamicTranslations);
 applyDynamicTranslations();
 
 
-// v30: compact trip bands plus schedule-group bands.
+// v31: compact trip bands plus reliable schedule-group bands.
 function shortTripBandLabel(name){
   const text=String(name||'').trim();
-  const trip=text.match(/\bTrip\s+[^·]+/i);
+  const trip=text.match(/Trip\s+[^·]+/i);
   if(trip) return trip[0].trim();
-  const pair=text.match(/\bPair\s+[^·]+/i);
+  const pair=text.match(/Pair\s+[^·]+/i);
   if(pair) return pair[0].trim();
   return text.length>24 ? `${text.slice(0,22)}…` : text;
 }
 function scheduleGroupLabel(name){
   const text=String(name||'').trim();
   const parts=text.split('·').map(x=>x.trim()).filter(Boolean);
-  if(parts.length>=2){
+  if(parts.length >= 2){
     const last=parts[parts.length-1];
-    if(/^trip\b/i.test(last) || /^pair\b/i.test(last)) return parts.slice(0,-1).join(' · ');
+    if(/^(trip|pair)\s/i.test(last)) return parts.slice(0,-1).join(' · ');
   }
   return parts[0] || text;
 }
@@ -56,21 +56,23 @@ function drawHistoryTripBands(){
   if(!timeline) return;
   timeline.querySelectorAll('.history-trip-band, .history-schedule-band').forEach(el=>el.remove());
   const timelineRect=timeline.getBoundingClientRect();
+
   for(const laneClass of ['actual-lane','initial-lane']){
     const tripGroups=new Map();
     const scheduleGroups=new Map();
+
     timeline.querySelectorAll(`.${laneClass} .history-leg-card[data-trip-id]`).forEach(card=>{
-      const tripKey=card.dataset.tripId;
+      const tripId=card.dataset.tripId || '';
       const fullName=card.dataset.tripName || '';
-      const scheduleLabel=scheduleGroupLabel(fullName);
-      if(tripKey){
-        if(!tripGroups.has(tripKey)) tripGroups.set(tripKey,[]);
-        tripGroups.get(tripKey).push(card);
+      const schedLabel=scheduleGroupLabel(fullName);
+      if(tripId){
+        if(!tripGroups.has(tripId)) tripGroups.set(tripId, []);
+        tripGroups.get(tripId).push(card);
       }
-      if(scheduleLabel){
-        const groupKey=`${laneClass}::${scheduleLabel}`;
-        if(!scheduleGroups.has(groupKey)) scheduleGroups.set(groupKey,{label:scheduleLabel,cards:[]});
-        scheduleGroups.get(groupKey).cards.push(card);
+      if(schedLabel){
+        const key=`${laneClass}::${schedLabel}`;
+        if(!scheduleGroups.has(key)) scheduleGroups.set(key, {label:schedLabel, cards:[]});
+        scheduleGroups.get(key).cards.push(card);
       }
     });
 
@@ -81,14 +83,14 @@ function drawHistoryTripBands(){
       const lane=cards[0].closest('.history-day-lane');
       if(!days.length || !lane) continue;
       const laneRect=lane.getBoundingClientRect();
-      const top=Math.min(...days.map(d=>d.getBoundingClientRect().top))-timelineRect.top+2;
-      const bottom=Math.max(...days.map(d=>d.getBoundingClientRect().bottom))-timelineRect.top-2;
+      const top=Math.min(...days.map(d=>d.getBoundingClientRect().top)) - timelineRect.top + 2;
+      const bottom=Math.max(...days.map(d=>d.getBoundingClientRect().bottom)) - timelineRect.top - 2;
       const band=document.createElement('div');
-      band.className=`history-schedule-band ${laneClass==='actual-lane'?'actual-schedule-band':'initial-schedule-band'}`;
-      band.style.left=`${laneRect.left-timelineRect.left}px`;
-      band.style.width=`${laneRect.width}px`;
+      band.className=`history-schedule-band ${laneClass==='actual-lane' ? 'actual-schedule-band' : 'initial-schedule-band'}`;
+      band.style.left=`${laneRect.left - timelineRect.left + 3}px`;
+      band.style.width=`${Math.max(0, laneRect.width - 6)}px`;
       band.style.top=`${top}px`;
-      band.style.height=`${Math.max(36,bottom-top)}px`;
+      band.style.height=`${Math.max(40, bottom - top)}px`;
       band.title=group.label;
       const label=document.createElement('span');
       label.className='history-schedule-band-label';
@@ -97,21 +99,21 @@ function drawHistoryTripBands(){
       timeline.appendChild(band);
     }
 
-    for(const [tripId,cards] of tripGroups){
+    for(const [tripId, cards] of tripGroups.entries()){
       if(!cards.length) continue;
       const days=cards.map(c=>c.closest('.history-day')).filter(Boolean);
       const lane=cards[0].closest('.history-day-lane');
       if(!days.length || !lane) continue;
       const laneRect=lane.getBoundingClientRect();
-      const top=Math.min(...days.map(d=>d.getBoundingClientRect().top))-timelineRect.top+18;
-      const bottom=Math.max(...days.map(d=>d.getBoundingClientRect().bottom))-timelineRect.top-4;
+      const top=Math.min(...cards.map(c=>c.getBoundingClientRect().top)) - timelineRect.top - 3;
+      const bottom=Math.max(...cards.map(c=>c.getBoundingClientRect().bottom)) - timelineRect.top + 3;
       const band=document.createElement('div');
-      band.className=`history-trip-band ${laneClass==='actual-lane'?'actual-band':'initial-band'}`;
+      band.className=`history-trip-band ${laneClass==='actual-lane' ? 'actual-band' : 'initial-band'}`;
       band.dataset.tripId=tripId;
-      band.style.left=`${laneRect.left-timelineRect.left+2}px`;
-      band.style.width=`${Math.max(0,laneRect.width-4)}px`;
+      band.style.left=`${laneRect.left - timelineRect.left + 10}px`;
+      band.style.width=`${Math.max(0, laneRect.width - 20)}px`;
       band.style.top=`${top}px`;
-      band.style.height=`${Math.max(28,bottom-top)}px`;
+      band.style.height=`${Math.max(30, bottom - top)}px`;
       const fullName=cards[0].dataset.tripName || '';
       band.title=fullName;
       const label=document.createElement('span');

@@ -33,7 +33,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.10.0")
+app = FastAPI(title="Flightline Tracker", version="2.11.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
@@ -91,7 +91,7 @@ def root_favicon():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.10.0"}
+    return {"ok": True, "version": "2.11.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -271,7 +271,7 @@ async def ocr_ups_schedule_screenshot(
 
 @app.get("/api/integrations/ups-schedule/ping")
 def ups_schedule_sync_ping(_sync: None = Depends(schedule_sync.require_sync_token)):
-    return {"ok": True, "version": "2.10.0", "schedule_sync": True, "jumpseat_sync": True}
+    return {"ok": True, "version": "2.11.0", "schedule_sync": True, "jumpseat_sync": True}
 
 
 @app.post("/api/integrations/ups-jumpseats")
