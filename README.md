@@ -1,6 +1,6 @@
 # Flightline Tracker
 
-**v28** focuses on mobile/PWA polish, a date-by-date Actual-vs-Initial history comparison, and more reliable user-triggered UPS schedule synchronization.
+**v29** focuses on mobile/PWA polish, a date-by-date Actual-vs-Initial history comparison, and more reliable user-triggered UPS schedule synchronization.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.
 
@@ -24,34 +24,33 @@ Flightline Tracker shows the current trip on a world map, follows live flights w
 - GitHub → GHCR → Watchtower deployment support
 - User-triggered Edge extension for UPS Work Schedule and confirmed jumpseat sync
 
-## v28 mobile and status changes
+## v29 status and display changes
 
-- Android-safe maskable PWA icons keep the aircraft inside the adaptive-icon safe area, reducing cropping on circular launchers.
-- The phone hamburger now opens a real right-side drawer above the status card.
-- Clock values no longer carry `CDT`, `CST`, or `UTC(+5)`-style suffixes.
-- Takeoff/landing metrics have quick aircraft symbols.
-- Airborne status starts with **Flying…**.
-- Delay/ahead is represented in its own metric with a colored status dot rather than another flag in the status sentence.
-- The metric grid now precedes a smaller, structured Next Flight card.
-- The map-only button uses a clearer expand/show-interface icon.
-- Leaflet's default branding box is removed; mandatory map/weather source credits are combined into a small unobtrusive credit line.
+- Takeoff/landing symbols are larger and clearer on desktop and mobile.
+- Dallas/local clock values stay clean (no `CDT`, `CST`, or `UTC(+5)` suffixes), while labels keep their location context.
+- The custom clock now includes the active airport, for example **JEROME TIME - ONT**.
+- Airborne status starts with **Flying** while retaining the flight/route and telemetry information.
+- While airborne, **Next flight in** becomes **Flight time left** and counts down to the current estimated landing time.
+- During the first half of a rest, the Delay / ahead metric keeps the previous flight's landing result (for example **Landed 12 min late**) until useful timing information becomes available for the next flight.
+- The local-clock display name remains editable in **Tracker settings** (for example Jerome → Jerry).
+- The compact Next Flight card now uses the layout: heading, Dallas date/time, flight + FR24 + route/destination city, and estimated flight time.
 
-## v28 history comparison
+## v29 history comparison
 
-The main History view is no longer organized primarily as independent trip tables. It is a vertical date timeline with parallel lanes:
+The main History view remains a vertical date timeline with parallel **Actual / Current** and **Initial Schedule** lanes, but flights belonging to the same trip are now visually grouped inside a light green trip band with a vertical **Trip / Pair** label. The repetitive full trip name is no longer printed on every individual flight card.
 
-```text
-DATE        ACTUAL / CURRENT              INITIAL SCHEDULE
-Sep 18     UPS99 ICN → ANC               UPS... original awarded leg
-Sep 19     UPS109 ANC → SDF (DH)          UPS... original awarded leg
-...
-```
+Flight types are color coded: **Operating** is green and **Deadhead** is orange.
 
-**Actual / Current** uses active current schedule rows and tracked actual state. **Initial Schedule** uses the immutable `awarded_*` snapshot created from the PDF. This means a reroute or replacement can disappear from Current without erasing what was originally awarded.
+When Admin mode is unlocked, History now supports granular cleanup:
 
-Trip-level Current/Awarded maps and deletion controls remain available under a collapsed **Saved trip tools** section.
+- delete an individual Actual / Current flight while preserving its Initial Schedule baseline when one exists;
+- delete an individual Initial Schedule item without removing the current/actual flight;
+- delete an entire displayed day from both lanes;
+- whole-trip delete controls remain under **Saved trip tools**.
 
-## v28 UPS Work Schedule sync
+Removing an Actual / Current history item also discards its saved provider track, tracker-generated logbook copy, and archived weather for that flight.
+
+## v29 UPS Work Schedule sync
 
 The Edge extension lives in the separate `edge-extension/` directory. The popup is intentionally small and settings remain behind ⚙.
 
@@ -139,7 +138,7 @@ Typical update:
 
 ```bash
 git add -A
-git commit -m "Flightline Tracker v28"
+git commit -m "Flightline Tracker v29"
 git push origin main
 ```
 

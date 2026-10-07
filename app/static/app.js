@@ -554,12 +554,16 @@ function fmtDelay(f) {
   return '—';
 }
 
-function updateDelayMetric(f) {
+function updateDelayMetric(f, {landed=false}={}) {
   const el=document.getElementById('delay');
   if(!el) return;
   const flag=f?.timing?.flag || 'unknown';
+  const mins=Number(f?.timing?.minutes);
   el.className=`delay-metric timing-${flag}`;
-  el.textContent=fmtDelay(f);
+  if(landed && flag==='delayed' && Number.isFinite(mins)) el.textContent=t('landed_late',{minutes:Math.abs(mins)});
+  else if(landed && flag==='ahead' && Number.isFinite(mins)) el.textContent=t('landed_ahead',{minutes:Math.abs(mins)});
+  else if(landed && flag==='on_time') el.textContent=t('landed_on_time');
+  else el.textContent=fmtDelay(f);
 }
 
 function setMetricLabels(primaryKey, secondaryKey) {
@@ -573,16 +577,25 @@ function setMetricLabels(primaryKey, secondaryKey) {
   if(b) b.innerHTML=htmlFor(secondaryKey);
 }
 
+function nextFlightEstimatedDuration(next) {
+  if(!next) return '—';
+  if(next.historical_average_hours!=null) return formatHoursDuration(next.historical_average_hours);
+  if(next.route_estimated_hours!=null) return formatHoursDuration(next.route_estimated_hours);
+  if(next.scheduled_duration_minutes!=null) return formatMinutesDuration(next.scheduled_duration_minutes);
+  return '—';
+}
+
 function nextFlightDescriptionHtml(next) {
   if (!next) return '';
   const when=fmtDallas(bestDepartureIso(next,{actual:false}));
-  const reference=next.historical_average_hours!=null
-    ? escapeHtml(t('typical_short',{time:formatHoursDuration(next.historical_average_hours)}))
-    : next.route_estimated_hours!=null ? escapeHtml(t('estimated_short',{time:formatHoursDuration(next.route_estimated_hours)})) : '';
+  const whenLine=when==='—'?'—':`${when} - ${t('dallas_time_inline')}`;
+  const destination=flightAirportDisplay(next,'destination');
   const dh=next.deadhead?`<span class="next-flight-chip">${escapeHtml(t('deadhead'))}</span>`:'';
-  return `<div class="next-flight-top"><span class="status-next-heading">${escapeHtml(t('next_flight_heading'))}</span><span class="next-flight-when">${escapeHtml(when)}</span></div>`+
-    `<div class="next-flight-route">${flightExternalLinksHtml(next)}<span class="next-flight-airports">${escapeHtml(next.origin)} → ${escapeHtml(next.destination)}</span>${dh}</div>`+
-    (reference?`<div class="next-flight-reference">${reference}</div>`:'');
+  const duration=nextFlightEstimatedDuration(next);
+  return `<div class="status-next-heading">${escapeHtml(t('next_flight_heading'))}</div>`+
+    `<div class="next-flight-when">${escapeHtml(whenLine)}</div>`+
+    `<div class="next-flight-route">${flightExternalLinksHtml(next)}<span class="next-flight-airports">${escapeHtml(next.origin)} → ${escapeHtml(destination)}</span>${dh}</div>`+
+    `<div class="next-flight-reference">${escapeHtml(t('estimated_flight_time_prefix',{time:duration}))}</div>`;
 }
 
 function setNextFlightCard(next) {
@@ -614,7 +627,7 @@ function updateStatusText() {
   const completed=flights.filter(f=>f.status==='completed' || f.status==='past');
   const last=completed.length ? completed[completed.length-1] : null;
   const next=flights.find(f=>f.status==='scheduled');
-  let mainHtml='',detailHtml='',delayFocus=null,primaryIso=null,secondaryIso=null;
+  let mainHtml='',detailHtml='',delayFocus=null,delayLanded=false,primaryIso=null,secondaryIso=null;
 
   if (current) {
     mainHtml=statusMainFlightHtml(current);
@@ -630,9 +643,26 @@ function updateStatusText() {
     const resting=(last.status==='completed' && dashboard?.status?.is_resting);
     mainHtml=escapeHtml(resting ? t('resting_at',{place:flightAirportDisplay(last,'destination')}) : t('on_ground_at',{place:flightAirportDisplay(last,'destination')}));
     detailHtml=next.deadhead?`<div class="status-next-note">${escapeHtml(t('deadhead'))}</div>`:'';
-    delayFocus=next;
-    primaryIso=bestArrivalIso(last);
-    secondaryIso=bestDepartureIso(next,{actual:false});
+    const nextTimingKnown=next?.timing && next.timing.flag && next.timing.flag!=='unknown';
+    const lastArrivalIso=bestArrivalIso(last);
+    const nextDepartureIso=bestDepartureIso(next,{actual:false});
+    let keepLastTiming=false;
+    if(!nextTimingKnown && lastArrivalIso && nextDepartureIso){
+      const arrivedMs=new Date(lastArrivalIso).getTime();
+      const nextMs=new Date(nextDepartureIso).getTime();
+      const nowMs=Date.now();
+      if(Number.isFinite(arrivedMs) && Number.isFinite(nextMs) && nextMs>arrivedMs){
+        keepLastTiming=nowMs < arrivedMs + ((nextMs-arrivedMs)/2);
+      }
+    }
+    if(keepLastTiming && last?.timing?.flag && last.timing.flag!=='unknown'){
+      delayFocus=last;
+      delayLanded=true;
+    }else{
+      delayFocus=next;
+    }
+    primaryIso=lastArrivalIso;
+    secondaryIso=nextDepartureIso;
     setMetricLabels('last_landing_dallas','next_takeoff_dallas');
   } else if (next) {
     mainHtml=escapeHtml(`${next.origin} → ${next.destination}`);
@@ -652,7 +682,7 @@ function updateStatusText() {
 
   mainEl.innerHTML=mainHtml || escapeHtml(t('waiting_trip'));
   detailEl.innerHTML=detailHtml;
-  updateDelayMetric(delayFocus);
+  updateDelayMetric(delayFocus,{landed:delayLanded});
   document.getElementById('takeoff-dallas').textContent=fmtDallas(primaryIso);
   document.getElementById('landing-dallas').textContent=fmtDallas(secondaryIso);
   setNextFlightCard(next);
@@ -664,14 +694,29 @@ function updateClocks() {
   const tz=dashboard?.status?.local_timezone || 'UTC';
   const clockName=dashboard?.status?.local_clock_name || 'Jerome';
   const clockTitle=t('custom_time_label',{name:clockName});
-  document.getElementById('local-label').textContent=clockTitle;
+  const clockPlace=dashboard?.status?.local_label || '';
+  document.getElementById('local-label').textContent=clockPlace ? `${clockTitle} - ${clockPlace}` : clockTitle;
   try {
     document.getElementById('local-time').textContent=new Intl.DateTimeFormat(currentLocale(),{timeZone:tz,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(now);
   } catch { document.getElementById('local-time').textContent='--:--'; }
 
+  const timerLabel=document.getElementById('rest-timer-label');
+  const current=(dashboard?.flights||[]).find(f=>f.status==='current');
+  if(current || dashboard?.status?.state==='airborne'){
+    if(timerLabel) timerLabel.textContent=t('flight_time_left');
+    const eta=bestArrivalIso(current,{actual:false});
+    if(!eta){document.getElementById('rest-timer').textContent='—';return;}
+    const diff=Math.floor((new Date(eta)-now)/1000);
+    if(diff<=0){document.getElementById('rest-timer').textContent=t('due_now');return;}
+    const h=Math.floor(diff/3600),m=Math.floor((diff%3600)/60),sec=diff%60;
+    document.getElementById('rest-timer').textContent=`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return;
+  }
+
+  if(timerLabel) timerLabel.textContent=t('rest_timer');
   const next=(dashboard?.flights||[]).find(f=>f.status==='scheduled');
   const nextIso=bestDepartureIso(next,{actual:false});
-  if (!nextIso || dashboard?.status?.state==='airborne') {
+  if (!nextIso) {
     document.getElementById('rest-timer').textContent='—';
     return;
   }

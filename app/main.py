@@ -26,21 +26,21 @@ from .services import tracker_settings, tracking_worker, viewer_presence, admin_
 from .services.flight_timing import timing_summary
 from .services.database_backup import backup_database
 from .services.ups_pdf_import import import_awarded_line_pdfs
-from .services.logbook_service import import_logbook_csv, import_logbook_lbk, logbook_options, build_logbook_map, clear_logbook, backfill_completed_tracker_flights
+from .services.logbook_service import import_logbook_csv, import_logbook_lbk, logbook_options, build_logbook_map, clear_logbook, backfill_completed_tracker_flights, invalidate_logbook_caches
 
 BASE_DIR = Path(__file__).resolve().parent
 backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.8.0")
+app = FastAPI(title="Flightline Tracker", version="2.9.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
 @app.on_event("startup")
 def _start_tracking_worker():
     generated = admin_auth.ensure_admin_password()
-    # v28 keeps a small, richer replay-weather archive (5 snapshots normally,
+    # v29 keeps a small, richer replay-weather archive (5 snapshots normally,
     # up to 7 on long-haul flights) while preserving the global storage cap.
     weather_archive.prune_archive()
     if generated:
@@ -91,7 +91,7 @@ def root_favicon():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.8.0"}
+    return {"ok": True, "version": "2.9.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -271,7 +271,7 @@ async def ocr_ups_schedule_screenshot(
 
 @app.get("/api/integrations/ups-schedule/ping")
 def ups_schedule_sync_ping(_sync: None = Depends(schedule_sync.require_sync_token)):
-    return {"ok": True, "version": "2.8.0", "schedule_sync": True, "jumpseat_sync": True}
+    return {"ok": True, "version": "2.9.0", "schedule_sync": True, "jumpseat_sync": True}
 
 
 @app.post("/api/integrations/ups-jumpseats")
@@ -600,6 +600,103 @@ def restore_full_awarded_schedule(trip_id: int | None = None, db: Session = Depe
     resequence_trip(db, trip)
     db.commit()
     return {"ok": True, "restored": restored, "removed_added": removed_added}
+
+
+def _clear_awarded_history(flight: Flight) -> None:
+    flight.awarded_sequence = None
+    flight.awarded_flight_number = None
+    flight.awarded_flight_date = None
+    flight.awarded_origin = None
+    flight.awarded_destination = None
+    flight.awarded_deadhead = None
+    flight.awarded_scheduled_departure_utc = None
+    flight.awarded_scheduled_arrival_utc = None
+
+
+def _delete_history_rows(db: Session, rows: list[Flight], *, lane: str, day: date | None = None) -> dict:
+    if lane not in {"actual", "initial", "both"}:
+        raise HTTPException(400, "lane must be actual, initial, or both")
+    delete_actual = lane in {"actual", "both"}
+    delete_initial = lane in {"initial", "both"}
+    weather_cleanup: set[int] = set()
+    affected_trips: set[int] = set()
+    removed_actual = removed_initial = 0
+
+    for flight in rows:
+        match_actual = delete_actual and (day is None or flight.flight_date == day)
+        match_initial = delete_initial and bool(flight.awarded_flight_number) and (day is None or flight.awarded_flight_date == day)
+        if not match_actual and not match_initial:
+            continue
+        affected_trips.add(flight.trip_id)
+
+        if match_initial:
+            _clear_awarded_history(flight)
+            removed_initial += 1
+
+        if match_actual:
+            discard_tracking_data(db, flight)
+            weather_cleanup.add(flight.id)
+            removed_actual += 1
+            if flight.awarded_flight_number:
+                # Keep the initial schedule baseline while removing the actual/current
+                # representation from the history comparison.
+                flight.schedule_active = False
+                flight.sequence = 0
+                flight.schedule_change_note = "Removed from history by admin"
+            else:
+                db.delete(flight)
+        elif match_initial and not flight.schedule_active:
+            # Nothing remains in either history lane.
+            db.delete(flight)
+
+    db.flush()
+    for trip_id in list(affected_trips):
+        trip = db.get(Trip, trip_id)
+        if trip is None:
+            continue
+        remaining = db.query(Flight).filter(Flight.trip_id == trip_id).count()
+        if remaining == 0:
+            db.delete(trip)
+        else:
+            resequence_trip(db, trip)
+    db.commit()
+
+    if removed_actual:
+        invalidate_logbook_caches()
+    for flight_id in weather_cleanup:
+        weather_archive.delete_flight_weather(flight_id)
+    return {"ok": True, "removed_actual": removed_actual, "removed_initial": removed_initial}
+
+
+@app.delete("/api/history/flight/{flight_id}")
+def delete_history_flight(
+    flight_id: int,
+    lane: str = Query(default="actual"),
+    db: Session = Depends(get_db),
+    _admin: None = Depends(admin_auth.require_admin),
+):
+    flight = db.get(Flight, flight_id)
+    if not flight:
+        raise HTTPException(404, "Flight not found")
+    result = _delete_history_rows(db, [flight], lane=lane)
+    return {**result, "flight_id": flight_id, "lane": lane}
+
+
+@app.delete("/api/history/day/{history_date}")
+def delete_history_day(
+    history_date: date,
+    lane: str = Query(default="both"),
+    db: Session = Depends(get_db),
+    _admin: None = Depends(admin_auth.require_admin),
+):
+    rows = db.query(Flight).all()
+    candidates = [
+        f for f in rows
+        if (lane in {"actual", "both"} and f.flight_date == history_date)
+        or (lane in {"initial", "both"} and f.awarded_flight_date == history_date)
+    ]
+    result = _delete_history_rows(db, candidates, lane=lane, day=history_date)
+    return {**result, "date": history_date.isoformat(), "lane": lane}
 
 
 @app.delete("/api/trip/{trip_id}/history")

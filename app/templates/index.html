@@ -9,16 +9,16 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Flightline">
-  <link rel="shortcut icon" href="/favicon.ico?v=28">
-  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png?v=28">
-  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=28">
-  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=28">
+  <link rel="shortcut icon" href="/favicon.ico?v=29">
+  <link rel="icon" type="image/png" sizes="64x64" href="/static/icons/favicon-64.png?v=29">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32.png?v=29">
+  <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png?v=29">
   <title data-i18n="app_title">Flightline Tracker</title>
-  <link rel="manifest" href="/static/manifest.webmanifest?v=28">
-  <script src="/static/theme.js?v=28"></script>
+  <link rel="manifest" href="/static/manifest.webmanifest?v=29">
+  <script src="/static/theme.js?v=29"></script>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-  <link rel="stylesheet" href="/static/style.css?v=28">
+  <link rel="stylesheet" href="/static/style.css?v=29">
 </head>
 <body>
   <div id="map"></div>
@@ -33,7 +33,7 @@
       <button id="view-toggle" class="hidden" data-i18n="show_awarded">Show awarded</button>
       <button id="edit-schedule-button" class="admin-control hidden" data-i18n="edit_schedule">Edit schedule</button>
       <button id="add-flight-button" class="admin-control hidden" data-i18n="add_change_trip">Add / change trip</button>
-      <button id="settings-button" class="admin-control hidden" data-i18n="tracking_api">Tracking API</button>
+      <button id="settings-button" class="admin-control hidden" data-i18n="tracker_settings">Tracker settings</button>
       <a href="/history" data-i18n="history">History</a>
       <button id="manage-button" class="manage-button" data-i18n="manage">Manage</button>
       <button id="theme-toggle" class="theme-toggle" title="Theme" aria-label="Theme">☾</button>
@@ -57,7 +57,7 @@
       <div><span id="primary-time-label"><span class="metric-plane-icon" aria-hidden="true">🛫</span> <span data-i18n="takeoff_dallas">Takeoff</span></span><strong id="takeoff-dallas">—</strong></div>
       <div><span id="secondary-time-label"><span class="metric-plane-icon" aria-hidden="true">🛬</span> <span data-i18n="landing_dallas">Landing</span></span><strong id="landing-dallas">—</strong></div>
       <div><span data-i18n="delay">Delay / ahead</span><strong id="delay" class="delay-metric timing-unknown">—</strong></div>
-      <div><span data-i18n="rest_timer">Next flight in</span><strong id="rest-timer">—</strong></div>
+      <div><span id="rest-timer-label" data-i18n="rest_timer">Next flight in</span><strong id="rest-timer">—</strong></div>
     </div>
     <div id="next-flight-card" class="next-flight-card hidden"></div>
   </section>
@@ -140,14 +140,14 @@
 
   <dialog id="settings-dialog">
     <form method="dialog" class="dialog-shell">
-      <div class="dialog-header"><div><div class="eyebrow" data-i18n="live_tracking">LIVE TRACKING</div><h2 data-i18n="tracking_provider">Tracking provider</h2></div><button value="cancel" class="icon-button">×</button></div>
+      <div class="dialog-header"><div><div class="eyebrow" data-i18n="tracker_settings">TRACKER SETTINGS</div><h2 data-i18n="tracker_settings">Tracker settings</h2></div><button value="cancel" class="icon-button">×</button></div>
+      <label class="clock-name-setting"><span data-i18n="local_clock_name">Local clock name</span><input id="tracking-local-clock-name" type="text" maxlength="40" value="Jerome" placeholder="Jerome"></label>
       <label><span data-i18n="provider">Provider</span><select id="tracking-provider"><option value="disabled" data-i18n="disabled">Disabled</option><option value="aeroapi">FlightAware AeroAPI</option><option value="fr24">Flightradar24 API</option><option value="adsbx">ADS-B Exchange</option></select></label>
       <label id="api-key-label"><span data-i18n="api_key">API key / token</span><input id="tracking-api-key" type="password" autocomplete="off" placeholder="Paste API key / token"></label>
       <div class="two-col">
         <label><span data-i18n="polling_interval">Polling interval (seconds)</span><input id="tracking-poll-seconds" type="number" min="60" step="60" value="600"></label>
         <label><span data-i18n="monthly_budget">Monthly budget guard ($)</span><input id="tracking-budget" type="number" min="0" step="0.25" value="4.50"></label>
         <label><span data-i18n="public_delay">Public position delay (minutes)</span><input id="tracking-public-delay" type="number" min="0" max="120" step="5" value="10"></label>
-        <label><span data-i18n="local_clock_name">Local clock name</span><input id="tracking-local-clock-name" type="text" maxlength="40" value="Jerome" placeholder="Jerome"></label>
       </div>
       <p class="hint" id="provider-help"></p>
       <div class="button-row"><button type="button" id="save-tracking-settings" data-i18n="save">Save</button><button type="button" id="test-tracking-settings" data-i18n="test_connection">Test connection</button><button type="button" id="sync-tracking-now" data-i18n="sync_now">Sync now</button></div>
@@ -169,8 +169,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
   <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.0.22/leaflet-maplibre-gl.js"></script>
-  <script src="/static/i18n.js?v=28"></script>
-  <script src="/static/admin.js?v=28"></script>
-  <script src="/static/app.js?v=28"></script>
+  <script src="/static/i18n.js?v=29"></script>
+  <script src="/static/admin.js?v=29"></script>
+  <script src="/static/app.js?v=29"></script>
 </body>
 </html>
