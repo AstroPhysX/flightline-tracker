@@ -33,7 +33,7 @@ backup_database()
 Base.metadata.create_all(bind=engine)
 ensure_schema_extensions(engine)
 
-app = FastAPI(title="Flightline Tracker", version="2.11.0")
+app = FastAPI(title="Flightline Tracker", version="2.12.0")
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=3)
 
 
@@ -91,7 +91,7 @@ def root_favicon():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "version": "2.11.0"}
+    return {"ok": True, "version": "2.12.0"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -164,7 +164,18 @@ def history(request: Request, db: Session = Depends(get_db)):
                 })
 
     def leg_sort(row: dict):
-        return (row.get("scheduled_departure_utc") or datetime.min.replace(tzinfo=timezone.utc), row.get("flight_number") or "")
+        # SQLite and older tracker rows can contain UTC datetimes both with and
+        # without tzinfo. Browser schedule sync supplies explicit UTC offsets,
+        # so comparing the raw objects can otherwise raise:
+        # "can't compare offset-naive and offset-aware datetimes".
+        value = row.get("scheduled_departure_utc")
+        if value is None:
+            value = datetime.min.replace(tzinfo=timezone.utc)
+        elif value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        else:
+            value = value.astimezone(timezone.utc)
+        return (value, row.get("flight_number") or "")
 
     history_days = []
     for day in sorted(set(actual_by_date) | set(awarded_by_date), reverse=True):
@@ -271,7 +282,7 @@ async def ocr_ups_schedule_screenshot(
 
 @app.get("/api/integrations/ups-schedule/ping")
 def ups_schedule_sync_ping(_sync: None = Depends(schedule_sync.require_sync_token)):
-    return {"ok": True, "version": "2.11.0", "schedule_sync": True, "jumpseat_sync": True}
+    return {"ok": True, "version": "2.12.0", "schedule_sync": True, "jumpseat_sync": True}
 
 
 @app.post("/api/integrations/ups-jumpseats")

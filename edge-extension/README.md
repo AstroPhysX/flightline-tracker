@@ -1,4 +1,4 @@
-# Flightline Tracker UPS Sync — Edge extension v4
+# Flightline Tracker UPS Sync — Edge extension v4.1
 
 The extension is user-triggered. It does not log in to UPS, handle MFA, navigate UPS, search/book/cancel jumpseats, use Autobook, submit forms, read UPS cookies, or poll UPS in the background.
 

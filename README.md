@@ -1,5 +1,7 @@
 # Flightline Tracker
 
+**v32 hotfix:** History now safely handles mixed timezone-aware/timezone-naive UTC timestamps created across older database rows and browser schedule syncs. The bundled Edge extension is v4.1 and more reliably clears the page selection after one-click text capture.
+
 **v31** focuses on mobile/PWA polish, a date-by-date Actual-vs-Initial history comparison, and more reliable user-triggered UPS schedule synchronization.
 
 A self-hosted flight tracker and lifetime logbook map for pilots and their families.

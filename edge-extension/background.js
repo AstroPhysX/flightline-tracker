@@ -74,9 +74,19 @@ async function copyRemotePageText(tabId){
     await dispatchKey(tabId,{type:'keyUp',key:'c',code:'KeyC',windowsVirtualKeyCode:67,nativeVirtualKeyCode:67,modifiers:2});
     await dispatchKey(tabId,{type:'keyUp',key:'Control',code:'ControlLeft',windowsVirtualKeyCode:17,nativeVirtualKeyCode:17,modifiers:0});
     await sleep(220);
-    // Best-effort clear of the remote selection without navigating/clicking.
+    // Clear the visual Select-All highlight. Zscaler's isolated browser does
+    // not reliably collapse the remote selection on Escape alone. First try
+    // Escape/ArrowRight, then perform one user-triggered click at the extreme
+    // top-left of the remote viewport (a non-content margin in the supported
+    // UPS pages). This does not navigate or submit anything; it only restores
+    // the normal unselected page after the copy operation.
     await dispatchKey(tabId,{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27,nativeVirtualKeyCode:27,modifiers:0}).catch(()=>{});
     await dispatchKey(tabId,{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27,nativeVirtualKeyCode:27,modifiers:0}).catch(()=>{});
+    await dispatchKey(tabId,{type:'keyDown',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39,nativeVirtualKeyCode:39,modifiers:0}).catch(()=>{});
+    await dispatchKey(tabId,{type:'keyUp',key:'ArrowRight',code:'ArrowRight',windowsVirtualKeyCode:39,nativeVirtualKeyCode:39,modifiers:0}).catch(()=>{});
+    await sleep(70);
+    await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mousePressed',x:4,y:4,button:'left',clickCount:1}).catch(()=>{});
+    await chrome.debugger.sendCommand(target,'Input.dispatchMouseEvent',{type:'mouseReleased',x:4,y:4,button:'left',clickCount:1}).catch(()=>{});
     await sleep(80);
     return {ok:true};
   } finally {
